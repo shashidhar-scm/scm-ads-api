@@ -6,6 +6,7 @@ import (
     "errors"
     "fmt"
     "strings"
+	"log"
 
     "github.com/shashi/scm-ads-api/internal/interfaces"
     "github.com/shashi/scm-ads-api/internal/models"
@@ -76,8 +77,10 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
     )
     
     if err != nil {
+		log.Println("Error fetching campaign with ID:", id, "Error:", err)
         if errors.Is(err, sql.ErrNoRows) {
-            return nil, nil
+			log.Println("Campaign not found with ID:", id)
+            return nil, sql.ErrNoRows
         }
         return nil, err
     }

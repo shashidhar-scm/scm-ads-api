@@ -71,12 +71,15 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 
     campaign, err := h.repo.GetByID(r.Context(), campaignID)
     if err != nil {
+		if err == sql.ErrNoRows {
+			w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": "campaign not found",
+				})
+				return
+		}
         http.Error(w, "Failed to fetch campaign: "+err.Error(), http.StatusInternalServerError)
-        return
-    }
-
-    if campaign == nil {
-        http.NotFound(w, r)
         return
     }
 
@@ -130,13 +133,16 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     existingCampaign, err := h.repo.GetByID(r.Context(), id)
     if err != nil {
         if err == sql.ErrNoRows {
-            http.Error(w, "Campaign not found", http.StatusNotFound)
-            return
+            w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "campaign not found",
+			})
+			return
         }
         http.Error(w, "Failed to get campaign: "+err.Error(), http.StatusInternalServerError)
         return
     }
-
     // Update the existing campaign with the new values
     if req.Name != nil {
         existingCampaign.Name = *req.Name
@@ -164,6 +170,14 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     // Get the updated campaign to return
     updatedCampaign, err := h.repo.GetByID(r.Context(), id)
     if err != nil {
+		if err == sql.ErrNoRows {
+			w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": "campaign not found",
+				})
+				return
+		}
         http.Error(w, "Failed to get updated campaign: "+err.Error(), http.StatusInternalServerError)
         return
     }
@@ -175,6 +189,8 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
 // DeleteCampaign handles DELETE /api/v1/campaigns/{id}
 func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request) {
     campaignID := chi.URLParam(r, "id")
+    log.Println("Deleting campaign with ID:", campaignID)
+
     if campaignID == "" {
         http.Error(w, "Campaign ID is required", http.StatusBadRequest)
         return
@@ -182,13 +198,26 @@ func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request)
 
     err := h.repo.Delete(r.Context(), campaignID)
     if err != nil {
+        log.Println("Error deleting campaign with ID:", campaignID, "Error:", err)
+
         if err == sql.ErrNoRows {
-            http.NotFound(w, r)
+            w.Header().Set("Content-Type", "application/json")
+            w.WriteHeader(http.StatusNotFound)
+            _ = json.NewEncoder(w).Encode(map[string]string{
+                "error": "campaign not found",
+            })
             return
         }
+
         http.Error(w, "Failed to delete campaign: "+err.Error(), http.StatusInternalServerError)
         return
     }
 
-    w.WriteHeader(http.StatusNoContent)
+    // Success response
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+    _ = json.NewEncoder(w).Encode(map[string]string{
+        "message": "campaign deleted successfully",
+        "id":      campaignID,
+    })
 }

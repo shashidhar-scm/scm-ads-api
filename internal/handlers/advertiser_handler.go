@@ -4,7 +4,7 @@ import (
     "encoding/json"
     "log"
     "net/http"
-
+    "database/sql"
     "github.com/go-chi/chi/v5"
     "github.com/go-playground/validator/v10"
     "github.com/shashi/scm-ads-api/internal/interfaces"
@@ -62,7 +62,15 @@ func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request
 
 	advertiser, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		if err == sql.ErrNoRows {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "advertiser not found",
+			})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -92,6 +100,20 @@ func (h *AdvertiserHandler) UpdateAdvertiser(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	_, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "advertiser not found",
+			})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	var req models.UpdateAdvertiserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -113,7 +135,23 @@ func (h *AdvertiserHandler) UpdateAdvertiser(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	advertiser, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "advertiser not found",
+			})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+
+	w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(advertiser)
 }
 
 func (h *AdvertiserHandler) DeleteAdvertiser(w http.ResponseWriter, r *http.Request) {
@@ -124,9 +162,22 @@ func (h *AdvertiserHandler) DeleteAdvertiser(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.repo.Delete(r.Context(), id); err != nil {
+		if err == sql.ErrNoRows {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "advertiser not found",
+			})
+			return
+		}
 		http.Error(w, "Failed to delete advertiser: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	w.WriteHeader(http.StatusNoContent)
+	// Success response
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+    _ = json.NewEncoder(w).Encode(map[string]string{
+        "message": "advertiser deleted successfully",
+        "id":      id,
+    })
 }

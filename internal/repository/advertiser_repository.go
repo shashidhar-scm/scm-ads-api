@@ -63,7 +63,7 @@ func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("advertiser not found")
+			return nil, sql.ErrNoRows
 		}
 		log.Printf("Error getting advertiser: %v", err)
 		return nil, fmt.Errorf("failed to get advertiser: %w", err)
@@ -178,7 +178,7 @@ func (r *advertiserRepository) Delete(ctx context.Context, id string) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("advertiser not found")
+		return sql.ErrNoRows
 	}
 
 	return nil
