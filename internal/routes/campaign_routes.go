@@ -4,8 +4,8 @@ package routes
 import (
     "database/sql"
     "github.com/go-chi/chi/v5"
-    "github.com/shashi/scm-ads-api/internal/handlers"
-    "github.com/shashi/scm-ads-api/internal/repository"
+    "scm/internal/handlers"
+    "scm/internal/repository"
     "log"
 	"net/http"
 )

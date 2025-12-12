@@ -2,7 +2,7 @@ package interfaces
 
 import (
 	"context"
-	"github.com/shashi/scm-ads-api/internal/models"
+	"scm/internal/models"
 )
 
 // AdvertiserRepository defines the interface for advertiser data operations

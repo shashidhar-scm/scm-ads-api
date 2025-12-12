@@ -10,8 +10,8 @@ import (
 
     "github.com/go-chi/chi/v5"
     "github.com/go-playground/validator/v10"
-    "github.com/shashi/scm-ads-api/internal/interfaces"
-    "github.com/shashi/scm-ads-api/internal/models"
+    "scm/internal/interfaces"
+    "scm/internal/models"
 )
 
 type CampaignHandler struct {

@@ -7,10 +7,10 @@ import (
     
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
-    "github.com/shashi/scm-ads-api/internal/config"
+    "scm/internal/config"
 )
 
-func SetupRoutes(db *sql.DB, cfg *config.Config) *chi.Mux {
+func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi.Mux {
     r := chi.NewRouter()
     
     // Middleware
@@ -31,6 +31,8 @@ func SetupRoutes(db *sql.DB, cfg *config.Config) *chi.Mux {
         RegisterCampaignRoutes(r, db)  // Correct order: router first, then db
         // Register advertiser routes
         RegisterAdvertiserRoutes(r, db)
+		RegisterCreativeRoutes(r, db, s3Config)
+
     })
     
     return r

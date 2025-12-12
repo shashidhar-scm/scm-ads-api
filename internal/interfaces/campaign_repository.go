@@ -4,7 +4,7 @@ package interfaces
 import (
     "context"
     "time"
-    "github.com/shashi/scm-ads-api/internal/models"
+    "scm/internal/models"
 )
 
 // CampaignFilter defines the filter criteria for listing campaigns

@@ -7,8 +7,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/shashi/scm-ads-api/internal/interfaces"
-	"github.com/shashi/scm-ads-api/internal/models"
+	"scm/internal/interfaces"
+	"scm/internal/models"
 )
 
 type advertiserRepository struct {

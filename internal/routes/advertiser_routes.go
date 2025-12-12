@@ -5,8 +5,8 @@ import (
 	"log"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/shashi/scm-ads-api/internal/handlers"
-	"github.com/shashi/scm-ads-api/internal/repository"
+	"scm/internal/handlers"
+	"scm/internal/repository"
 )
 
 func RegisterAdvertiserRoutes(router chi.Router, db *sql.DB) {

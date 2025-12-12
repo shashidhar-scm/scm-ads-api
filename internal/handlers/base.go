@@ -3,7 +3,7 @@ package handlers
 
 import (
 	"database/sql"
-	"github.com/shashi/scm-ads-api/internal/config"
+	"scm/internal/config"
 )
 
 type BaseHandler struct {

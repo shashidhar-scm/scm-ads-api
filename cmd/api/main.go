@@ -11,10 +11,10 @@ import (
     "time"
 
     _ "github.com/lib/pq"
-    "github.com/shashi/scm-ads-api/internal/config"
-    "github.com/shashi/scm-ads-api/internal/db"
-    "github.com/shashi/scm-ads-api/internal/db/migrations"
-    "github.com/shashi/scm-ads-api/internal/routes"
+    "scm/internal/config"
+    "scm/internal/db"
+    "scm/internal/db/migrations"
+    "scm/internal/routes"
 )
 
 func main() {
@@ -38,8 +38,14 @@ func main() {
         log.Fatalf("Failed to run migrations: %v", err)
     }
 
+	// Initialize S3 configuration
+    s3Config, err := config.NewS3Config()
+    if err != nil {
+        log.Fatalf("Failed to create S3 client: %v", err)
+    }
+
     // Create router and setup routes
-    router := routes.SetupRoutes(database.DB, cfg)
+    router := routes.SetupRoutes(database.DB, cfg, s3Config)
 
     // Create server
     server := &http.Server{
