@@ -4,7 +4,6 @@ import (
     "context"
     "database/sql"
     "fmt"
-    "time"
 
     "scm/internal/models"
 )
@@ -29,9 +28,9 @@ func NewCreativeRepository(db *sql.DB) CreativeRepository {
 func (r *creativeRepository) Create(ctx context.Context, creative *models.Creative) error {
     query := `
         INSERT INTO creatives (
-            id, name, type, url, file_path, size, campaign_id, advertiser_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING created_at, updated_at
+            id, name, type, url, file_path, size, uploaded_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING uploaded_at
     `
     
     err := r.db.QueryRowContext(
@@ -43,18 +42,15 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
         creative.URL,
         creative.FilePath,
         creative.Size,
-        creative.CampaignID,
-        creative.AdvertiserID,
-        creative.CreatedAt,
-        creative.UpdatedAt,
-    ).Scan(&creative.CreatedAt, &creative.UpdatedAt)
+        creative.UploadedAt,
+    ).Scan(&creative.UploadedAt)
     
     return err
 }
 
 func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Creative, error) {
     query := `
-        SELECT id, name, type, url, file_path, size, campaign_id, advertiser_id, created_at, updated_at
+        SELECT id, name, type, url, file_path, size, uploaded_at
         FROM creatives
         WHERE id = $1
     `
@@ -67,10 +63,7 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         &creative.URL,
         &creative.FilePath,
         &creative.Size,
-        &creative.CampaignID,
-        &creative.AdvertiserID,
-        &creative.CreatedAt,
-        &creative.UpdatedAt,
+        &creative.UploadedAt,
     )
     
     if err != nil {
@@ -85,10 +78,12 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
 
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error) {
     query := `
-        SELECT id, name, type, url, file_path, size, campaign_id, advertiser_id, created_at, updated_at
-        FROM creatives
-        WHERE campaign_id = $1
-        ORDER BY created_at DESC
+        SELECT DISTINCT
+            c.id, c.name, c.type, c.url, c.file_path, c.size, c.uploaded_at
+        FROM creatives c
+        JOIN creative_assignments ca ON ca.creative_id = c.id
+        WHERE ca.campaign_id = $1
+        ORDER BY c.uploaded_at DESC
     `
     
     rows, err := r.db.QueryContext(ctx, query, campaignID)
@@ -107,10 +102,7 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
             &creative.URL,
             &creative.FilePath,
             &creative.Size,
-            &creative.CampaignID,
-            &creative.AdvertiserID,
-            &creative.CreatedAt,
-            &creative.UpdatedAt,
+            &creative.UploadedAt,
         ); err != nil {
             return nil, err
         }
@@ -123,19 +115,17 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
 func (r *creativeRepository) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
     query := `
         UPDATE creatives
-        SET name = $1, updated_at = $2
-        WHERE id = $3
-        RETURNING updated_at
+        SET name = COALESCE($1, name)
+        WHERE id = $2
+        RETURNING id
     `
     
-    var updatedAt time.Time
     err := r.db.QueryRowContext(
         ctx,
         query,
         req.Name,
-        time.Now().UTC(),
         id,
-    ).Scan(&updatedAt)
+    ).Scan(&id)
     
     return err
 }

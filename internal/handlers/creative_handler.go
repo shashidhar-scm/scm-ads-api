@@ -3,12 +3,11 @@ package handlers
 import (
     "database/sql"
     "encoding/json"
-    "fmt"
     "log"
     "mime/multipart"
     "net/http"
-    "os"
     "path/filepath"
+    "strings"
     "time"
 
     "github.com/aws/aws-sdk-go-v2/aws"
@@ -29,6 +28,7 @@ type CreativeHandler struct {
     s3Client  *s3.Client
     validator *validator.Validate
     bucket    string
+    publicBaseURL string
 }
 
 
@@ -37,6 +37,7 @@ func NewCreativeHandler(repo repository.CreativeRepository, s3Config *config.S3C
         repo:      repo,
         s3Client:  s3Config.Client,
         bucket:    s3Config.Bucket,
+        publicBaseURL: s3Config.PublicBaseURL,
         validator: validator.New(),
     }
 }
@@ -55,21 +56,13 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         return
     }
 
-    // 2. Get the campaign ID
     campaignID := r.FormValue("campaign_id")
     if campaignID == "" {
         http.Error(w, "Campaign ID is required", http.StatusBadRequest)
         return
     }
 
-    // 3. Get the advertiser ID
-    advertiserID := r.FormValue("advertiser_id")
-    if advertiserID == "" {
-        http.Error(w, "Advertiser ID is required", http.StatusBadRequest)
-        return
-    }
-
-    // 4. Get the files from the form
+    // 2. Get the files from the form
     files := r.MultipartForm.File["files"]
     if len(files) == 0 {
         http.Error(w, "No files uploaded", http.StatusBadRequest)
@@ -94,14 +87,11 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
             Name:         fileHeader.Filename,
             Type:         getFileType(fileHeader),
             Size:         fileHeader.Size,
-            CampaignID:   campaignID,
-            AdvertiserID: advertiserID,
-            CreatedAt:    time.Now().UTC(),
-            UpdatedAt:    time.Now().UTC(),
+            UploadedAt:   time.Now().UTC(),
         }
 
         // Upload to S3
-        key := filepath.Join("creatives", campaignID, creative.ID+filepath.Ext(fileHeader.Filename))
+        key := filepath.Join("creatives", creative.ID+filepath.Ext(fileHeader.Filename))
         
         _, err = uploader.Upload(r.Context(), &s3.PutObjectInput{
             Bucket: aws.String(h.bucket),
@@ -116,14 +106,18 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         }
 
         // Set the URL
-        creative.URL = fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", 
-            h.bucket, os.Getenv("AWS_REGION"), key)
+        creative.URL = strings.TrimRight(h.publicBaseURL, "/") + "/" + key
+
+        // Store the object key internally
+        creative.FilePath = key
 
         // Save to database
         if err := h.repo.Create(r.Context(), creative); err != nil {
             log.Printf("Failed to save creative %s: %v", fileHeader.Filename, err)
             continue
         }
+
+        creative.CampaignID = campaignID
 
         uploadedCreatives = append(uploadedCreatives, creative)
     }
@@ -165,6 +159,12 @@ func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http
         log.Printf("Failed to list creatives: %v", err)
         http.Error(w, "Failed to list creatives", http.StatusInternalServerError)
         return
+    }
+
+    for _, c := range creatives {
+        if c != nil {
+            c.CampaignID = campaignID
+        }
     }
 
     w.Header().Set("Content-Type", "application/json")
