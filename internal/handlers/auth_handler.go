@@ -160,7 +160,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(h.cfg.JWTSecret))
 	if err != nil {
-		http.Error(w, "Failed to login", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "token_sign_failed", "Failed to login")
 		return
 	}
 

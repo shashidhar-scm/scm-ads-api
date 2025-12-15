@@ -21,7 +21,7 @@ func NewUserHandler(users repository.UserRepository) *UserHandler {
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
     users, err := h.users.ListAll(r.Context())
     if err != nil {
-        http.Error(w, "Failed to list users", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
         return
     }
 
@@ -36,17 +36,17 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "User ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
         return
     }
 
     u, err := h.users.GetByID(r.Context(), id)
     if err != nil {
         if err.Error() == "user not found" {
-            http.Error(w, "User not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
             return
         }
-        http.Error(w, "Failed to get user", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
         return
     }
 
@@ -57,28 +57,28 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "User ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
         return
     }
 
     var req models.UpdateUserRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
     }
 
     if err := h.users.UpdateProfile(r.Context(), id, &req); err != nil {
         if err.Error() == "user not found" {
-            http.Error(w, "User not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
             return
         }
-        http.Error(w, "Failed to update user", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_user_failed", "Failed to update user")
         return
     }
 
     updated, err := h.users.GetByID(r.Context(), id)
     if err != nil {
-        http.Error(w, "Failed to fetch updated user", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
         return
     }
 
@@ -89,76 +89,72 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "User ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
         return
     }
 
     var req models.ChangePasswordRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
     }
     if req.OldPassword == "" || req.NewPassword == "" {
-        http.Error(w, "old_password and new_password are required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "old_password and new_password are required")
         return
     }
     if len(req.NewPassword) < 8 {
-        http.Error(w, "new_password must be at least 8 characters", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "new_password must be at least 8 characters")
         return
     }
 
     u, err := h.users.GetByID(r.Context(), id)
     if err != nil {
         if err.Error() == "user not found" {
-            http.Error(w, "User not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
             return
         }
-        http.Error(w, "Failed to get user", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
         return
     }
 
     if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.OldPassword)); err != nil {
-        http.Error(w, "Old password is incorrect", http.StatusUnauthorized)
+        writeJSONErrorResponse(w, http.StatusUnauthorized, "invalid_password", "Old password is incorrect")
         return
     }
 
     hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
     if err != nil {
-        http.Error(w, "Failed to change password", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "hash_failed", "Failed to change password")
         return
     }
 
     if err := h.users.UpdatePasswordHash(r.Context(), id, string(hash)); err != nil {
         if err.Error() == "user not found" {
-            http.Error(w, "User not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
             return
         }
-        http.Error(w, "Failed to change password", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "change_password_failed", "Failed to change password")
         return
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(map[string]any{"message": "password updated"})
+    writeJSONMessage(w, http.StatusOK, "password updated")
 }
 
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "User ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
         return
     }
 
     if err := h.users.Delete(r.Context(), id); err != nil {
         if err.Error() == "user not found" {
-            w.Header().Set("Content-Type", "application/json")
-            w.WriteHeader(http.StatusNotFound)
-            _ = json.NewEncoder(w).Encode(map[string]any{"error": "user_not_found", "message": "User not found"})
+            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
             return
         }
-        http.Error(w, "Failed to delete user", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_user_failed", "Failed to delete user")
         return
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(map[string]any{"message": "User has been deleted successfully"})
+    writeJSONMessage(w, http.StatusOK, "User has been deleted successfully")
 }

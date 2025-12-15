@@ -88,21 +88,17 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
 func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
     campaignID := chi.URLParam(r, "id")
     if campaignID == "" {
-        http.Error(w, "Campaign ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
         return
     }
 
     campaign, err := h.repo.GetByID(r.Context(), campaignID)
     if err != nil {
-		if err == sql.ErrNoRows {
-			w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]string{
-					"error": "campaign not found",
-				})
-				return
-		}
-        http.Error(w, "Failed to fetch campaign: "+err.Error(), http.StatusInternalServerError)
+        if err == sql.ErrNoRows {
+            writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+            return
+        }
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
         return
     }
 
@@ -121,7 +117,7 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
     
     campaigns, err := h.repo.List(r.Context(), filter)
     if err != nil {
-        http.Error(w, "Failed to list campaigns: "+err.Error(), http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
         return
     }
 
@@ -137,18 +133,18 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "Campaign ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
         return
     }
 
     var req models.UpdateCampaignRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
     }
 
     if err := h.validator.Struct(req); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
         return
     }
 
@@ -156,14 +152,10 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     existingCampaign, err := h.repo.GetByID(r.Context(), id)
     if err != nil {
         if err == sql.ErrNoRows {
-            w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error": "campaign not found",
-			})
-			return
+            writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+            return
         }
-        http.Error(w, "Failed to get campaign: "+err.Error(), http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to get campaign")
         return
     }
     // Update the existing campaign with the new values
@@ -189,22 +181,18 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     // Update the campaign in the database
     err = h.repo.Update(r.Context(), id, existingCampaign)
     if err != nil {
-        http.Error(w, "Failed to update campaign: "+err.Error(), http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_campaign_failed", "Failed to update campaign")
         return
     }
 
     // Get the updated campaign to return
     updatedCampaign, err := h.repo.GetByID(r.Context(), id)
     if err != nil {
-		if err == sql.ErrNoRows {
-			w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]string{
-					"error": "campaign not found",
-				})
-				return
-		}
-        http.Error(w, "Failed to get updated campaign: "+err.Error(), http.StatusInternalServerError)
+        if err == sql.ErrNoRows {
+            writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+            return
+        }
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to get updated campaign")
         return
     }
 
@@ -218,32 +206,19 @@ func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request)
     log.Println("Deleting campaign with ID:", campaignID)
 
     if campaignID == "" {
-        http.Error(w, "Campaign ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
         return
     }
 
     err := h.repo.Delete(r.Context(), campaignID)
     if err != nil {
-        log.Println("Error deleting campaign with ID:", campaignID, "Error:", err)
-
         if err == sql.ErrNoRows {
-            w.Header().Set("Content-Type", "application/json")
-            w.WriteHeader(http.StatusNotFound)
-            _ = json.NewEncoder(w).Encode(map[string]string{
-                "error": "campaign not found",
-            })
+            writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
             return
         }
-
-        http.Error(w, "Failed to delete campaign: "+err.Error(), http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_campaign_failed", "Failed to delete campaign")
         return
     }
 
-    // Success response
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusOK)
-    _ = json.NewEncoder(w).Encode(map[string]string{
-        "message": "campaign deleted successfully",
-        "id":      campaignID,
-    })
+    writeJSONMessage(w, http.StatusOK, "campaign deleted successfully")
 }

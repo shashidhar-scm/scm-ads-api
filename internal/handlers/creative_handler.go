@@ -72,25 +72,25 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     // 1. Parse the multipart form
     const maxMemory = 32 << 20 // 32MB max memory
     if err := r.ParseMultipartForm(maxMemory); err != nil {
-        http.Error(w, "Failed to parse form", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
         return
     }
 
     campaignID := r.FormValue("campaign_id")
     if campaignID == "" {
-        http.Error(w, "Campaign ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id is required")
         return
     }
 
     selectedDays := parseFormList(r, "selected_days")
     if len(selectedDays) == 0 {
-        http.Error(w, "selected_days is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "selected_days is required")
         return
     }
 
     timeSlots := parseFormList(r, "time_slots")
     if len(timeSlots) == 0 {
-        http.Error(w, "time_slots is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "time_slots is required")
         return
     }
 
@@ -99,7 +99,7 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     // 2. Get the files from the form
     files := r.MultipartForm.File["files"]
     if len(files) == 0 {
-        http.Error(w, "No files uploaded", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "No files uploaded")
         return
     }
 
@@ -160,7 +160,7 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
 
     // 6. Return the uploaded creatives
     if len(uploadedCreatives) == 0 {
-        http.Error(w, "Failed to upload any files", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", "Failed to upload any files")
         return
     }
 
@@ -186,14 +186,14 @@ func getFileType(header *multipart.FileHeader) models.CreativeType {
 func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http.Request) {
     campaignID := chi.URLParam(r, "campaignID")
     if campaignID == "" {
-        http.Error(w, "Campaign ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaignID is required")
         return
     }
 
     creatives, err := h.repo.ListByCampaign(r.Context(), campaignID)
     if err != nil {
         log.Printf("Failed to list creatives: %v", err)
-        http.Error(w, "Failed to list creatives", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
         return
     }
 
@@ -207,7 +207,7 @@ func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) 
     creatives, err := h.repo.ListAll(r.Context())
     if err != nil {
         log.Printf("Failed to list creatives: %v", err)
-        http.Error(w, "Failed to list creatives", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
         return
     }
 
@@ -221,18 +221,18 @@ func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) 
 func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "Creative ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
         return
     }
 
     creative, err := h.repo.GetByID(r.Context(), id)
     if err != nil {
         if err == sql.ErrNoRows {
-            http.Error(w, "Creative not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
             return
         }
         log.Printf("Failed to get creative: %v", err)
-        http.Error(w, "Failed to get creative", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_creative_failed", "Failed to get creative")
         return
     }
 
@@ -246,50 +246,50 @@ func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
 func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "Creative ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
         return
     }
 
     var req models.UpdateCreativeRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
     }
 
     if err := h.validator.Struct(req); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
         return
     }
 
     if err := h.repo.Update(r.Context(), id, &req); err != nil {
         if err == sql.ErrNoRows {
-            http.Error(w, "Creative not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
             return
         }
         log.Printf("Failed to update creative: %v", err)
-        http.Error(w, "Failed to update creative", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
         return
     }
 
-    w.WriteHeader(http.StatusNoContent)
+    writeJSONMessage(w, http.StatusOK, "creative updated successfully")
 }
 // DeleteCreative handles DELETE /creatives/{id}
 func (h *CreativeHandler) DeleteCreative(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
-        http.Error(w, "Creative ID is required", http.StatusBadRequest)
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
         return
     }
 
     if err := h.repo.Delete(r.Context(), id); err != nil {
         if err == sql.ErrNoRows {
-            http.Error(w, "Creative not found", http.StatusNotFound)
+            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
             return
         }
         log.Printf("Failed to delete creative: %v", err)
-        http.Error(w, "Failed to delete creative", http.StatusInternalServerError)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_creative_failed", "Failed to delete creative")
         return
     }
 
-    w.WriteHeader(http.StatusNoContent)
+    writeJSONMessage(w, http.StatusOK, "creative deleted successfully")
 }

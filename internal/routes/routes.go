@@ -26,8 +26,9 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
     r.Use(middleware.Recoverer)
 
     r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(http.StatusOK)
-        w.Write([]byte("Application Up and running"))
+        _ = json.NewEncoder(w).Encode(map[string]any{"message": "Application Up and running"})
     })
     
     // Health check
