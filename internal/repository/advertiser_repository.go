@@ -21,21 +21,30 @@ func NewAdvertiserRepository(db *sql.DB) interfaces.AdvertiserRepository {
 
 func (r *advertiserRepository) Create(ctx context.Context, advertiser *models.Advertiser) error {
 	query := `
-		INSERT INTO advertisers (name, email)
-		VALUES ($1, $2)
-		RETURNING id, created_at, updated_at
+		INSERT INTO advertisers (name, email, created_by)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_by, created_at, updated_at
 	`
+
+	var createdBy sql.NullString
 
 	err := r.db.QueryRowContext(
 		ctx,
 		query,
 		advertiser.Name,
 		advertiser.Email,
+		advertiser.CreatedBy,
 	).Scan(
 		&advertiser.ID,
+		&createdBy,
 		&advertiser.CreatedAt,
 		&advertiser.UpdatedAt,
 	)
+	if createdBy.Valid {
+		advertiser.CreatedBy = createdBy.String
+	} else {
+		advertiser.CreatedBy = ""
+	}
 
 	if err != nil {
 		log.Printf("Error creating advertiser: %v", err)
@@ -47,19 +56,26 @@ func (r *advertiserRepository) Create(ctx context.Context, advertiser *models.Ad
 
 func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.Advertiser, error) {
 	query := `
-		SELECT id, name, email, created_at, updated_at
+		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
 		WHERE id = $1
 	`
 
 	var advertiser models.Advertiser
+	var createdBy sql.NullString
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&advertiser.ID,
 		&advertiser.Name,
 		&advertiser.Email,
+		&createdBy,
 		&advertiser.CreatedAt,
 		&advertiser.UpdatedAt,
 	)
+	if createdBy.Valid {
+		advertiser.CreatedBy = createdBy.String
+	} else {
+		advertiser.CreatedBy = ""
+	}
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -74,7 +90,7 @@ func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.
 
 func (r *advertiserRepository) List(ctx context.Context) ([]models.Advertiser, error) {
 	query := `
-		SELECT id, name, email, created_at, updated_at
+		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
 		ORDER BY name
 	`
@@ -89,15 +105,22 @@ func (r *advertiserRepository) List(ctx context.Context) ([]models.Advertiser, e
 	var advertisers []models.Advertiser
 	for rows.Next() {
 		var adv models.Advertiser
+		var createdBy sql.NullString
 		if err := rows.Scan(
 			&adv.ID,
 			&adv.Name,
 			&adv.Email,
+			&createdBy,
 			&adv.CreatedAt,
 			&adv.UpdatedAt,
 		); err != nil {
 			log.Printf("Error scanning advertiser: %v", err)
 			return nil, fmt.Errorf("failed to scan advertiser: %w", err)
+		}
+		if createdBy.Valid {
+			adv.CreatedBy = createdBy.String
+		} else {
+			adv.CreatedBy = ""
 		}
 		advertisers = append(advertisers, adv)
 	}

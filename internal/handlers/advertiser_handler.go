@@ -39,8 +39,9 @@ func (h *AdvertiserHandler) CreateAdvertiser(w http.ResponseWriter, r *http.Requ
 	}
 
 	advertiser := &models.Advertiser{
-		Name:  req.Name,
-		Email: req.Email,
+		Name:      req.Name,
+		Email:     req.Email,
+		CreatedBy: req.CreatedBy,
 	}
 
 	if err := h.repo.Create(r.Context(), advertiser); err != nil {
