@@ -17,7 +17,10 @@ type Creative struct {
     URL          string      `json:"url"`
     FilePath     string      `json:"-"`
     Size         int64       `json:"size"`
-    CampaignID   string      `json:"campaign_id,omitempty"`
+    CampaignID   string      `json:"campaign_id" validate:"required,uuid4"`
+    SelectedDays []string    `json:"selected_days"`
+    TimeSlots    []string    `json:"time_slots"`
+    Devices      []string    `json:"devices"`
     UploadedAt   time.Time   `json:"uploaded_at"`
 }
 

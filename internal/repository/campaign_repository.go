@@ -8,6 +8,7 @@ import (
     "strings"
 	"log"
 
+    "github.com/lib/pq"
     "scm/internal/interfaces"
     "scm/internal/models"
 )
@@ -23,11 +24,16 @@ func NewCampaignRepository(db *sql.DB) interfaces.CampaignRepository {
 }
 
 func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campaign) error {
+    cities := campaign.Cities
+    if cities == nil {
+        cities = []string{}
+    }
+
     query := `
         INSERT INTO campaigns (
-            name, status, start_date, end_date, budget, 
+            name, status, cities, start_date, end_date, budget, 
             spent, impressions, clicks, ctr, advertiser_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id, created_at, updated_at
     `
     
@@ -36,6 +42,7 @@ func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campai
         query,
         campaign.Name,
         campaign.Status,
+        pq.Array(cities),
         campaign.StartDate,
         campaign.EndDate,
         campaign.Budget,
@@ -52,7 +59,7 @@ func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campai
 func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Campaign, error) {
     query := `
         SELECT 
-            id, name, status, start_date, end_date, budget,
+            id, name, status, cities, start_date, end_date, budget,
             spent, impressions, clicks, ctr, advertiser_id,
             created_at, updated_at
         FROM campaigns 
@@ -64,6 +71,7 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
         &campaign.ID,
         &campaign.Name,
         &campaign.Status,
+        pq.Array(&campaign.Cities),
         &campaign.StartDate,
         &campaign.EndDate,
         &campaign.Budget,
@@ -92,7 +100,7 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 func (r *campaignRepository) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
     query := `
         SELECT 
-            id, name, status, start_date, end_date, budget,
+            id, name, status, cities, start_date, end_date, budget,
             spent, impressions, clicks, ctr, advertiser_id,
             created_at, updated_at
         FROM campaigns
@@ -158,6 +166,7 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
             &campaign.ID,
             &campaign.Name,
             &campaign.Status,
+            pq.Array(&campaign.Cities),
             &campaign.StartDate,
             &campaign.EndDate,
             &campaign.Budget,
@@ -180,20 +189,26 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
 
 // Update updates a campaign with the given ID
 func (r *campaignRepository) Update(ctx context.Context, id string, campaign *models.Campaign) error {
+    cities := campaign.Cities
+    if cities == nil {
+        cities = []string{}
+    }
+
     query := `
         UPDATE campaigns 
         SET name = $1, 
             status = $2, 
-            start_date = $3, 
-            end_date = $4, 
-            budget = $5, 
-            spent = $6, 
-            impressions = $7, 
-            clicks = $8, 
-            ctr = $9, 
-            advertiser_id = $10,
+            cities = $3,
+            start_date = $4, 
+            end_date = $5, 
+            budget = $6, 
+            spent = $7, 
+            impressions = $8, 
+            clicks = $9, 
+            ctr = $10, 
+            advertiser_id = $11,
             updated_at = NOW() AT TIME ZONE 'UTC'
-        WHERE id = $11
+        WHERE id = $12
         RETURNING updated_at
     `
 
@@ -202,6 +217,7 @@ func (r *campaignRepository) Update(ctx context.Context, id string, campaign *mo
         query,
         campaign.Name,
         campaign.Status,
+        pq.Array(cities),
         campaign.StartDate,
         campaign.EndDate,
         campaign.Budget,

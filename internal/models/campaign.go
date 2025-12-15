@@ -16,6 +16,7 @@ type Campaign struct {
     ID           string        `json:"id"`
     Name         string        `json:"name" validate:"required"`
     Status       CampaignStatus `json:"status"`
+    Cities       []string      `json:"cities"`
     StartDate    time.Time     `json:"start_date" validate:"required"`
     EndDate      time.Time     `json:"end_date" validate:"required,gtfield=StartDate"`
     Budget       float64       `json:"budget" validate:"required,gt=0"`
@@ -30,6 +31,7 @@ type Campaign struct {
 
 type CreateCampaignRequest struct {
     Name         string    `json:"name" validate:"required"`
+    Cities       []string  `json:"cities"`
     StartDate    time.Time `json:"start_date" validate:"required"`
     EndDate      time.Time `json:"end_date" validate:"required,gtfield=StartDate"`
     Budget       float64   `json:"budget" validate:"required,gt=0"`
@@ -39,6 +41,7 @@ type CreateCampaignRequest struct {
 type UpdateCampaignRequest struct {
     Name      *string    `json:"name,omitempty"`
     Status    *string    `json:"status,omitempty" validate:"omitempty,oneof=draft active paused completed"`
+    Cities    *[]string  `json:"cities,omitempty"`
     StartDate *time.Time `json:"start_date,omitempty"`
     EndDate   *time.Time `json:"end_date,omitempty" validate:"omitempty,gtfield=StartDate"`
     Budget    *float64   `json:"budget,omitempty" validate:"omitempty,gt=0"`

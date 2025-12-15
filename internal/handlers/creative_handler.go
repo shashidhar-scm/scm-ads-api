@@ -47,6 +47,26 @@ func generateUUID() string {
     return uuid.New().String()
 }
 
+func parseFormList(r *http.Request, key string) []string {
+    if r.MultipartForm == nil {
+        return nil
+    }
+
+    var out []string
+    if vs := r.MultipartForm.Value[key]; len(vs) > 0 {
+        for _, v := range vs {
+            for _, part := range strings.Split(v, ",") {
+                part = strings.TrimSpace(part)
+                if part == "" {
+                    continue
+                }
+                out = append(out, part)
+            }
+        }
+    }
+    return out
+}
+
 // UploadCreative handles multiple file uploads to S3
 func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request) {
     // 1. Parse the multipart form
@@ -61,6 +81,20 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         http.Error(w, "Campaign ID is required", http.StatusBadRequest)
         return
     }
+
+    selectedDays := parseFormList(r, "selected_days")
+    if len(selectedDays) == 0 {
+        http.Error(w, "selected_days is required", http.StatusBadRequest)
+        return
+    }
+
+    timeSlots := parseFormList(r, "time_slots")
+    if len(timeSlots) == 0 {
+        http.Error(w, "time_slots is required", http.StatusBadRequest)
+        return
+    }
+
+    devices := parseFormList(r, "devices")
 
     // 2. Get the files from the form
     files := r.MultipartForm.File["files"]
@@ -87,6 +121,10 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
             Name:         fileHeader.Filename,
             Type:         getFileType(fileHeader),
             Size:         fileHeader.Size,
+            CampaignID:   campaignID,
+            SelectedDays: selectedDays,
+            TimeSlots:    timeSlots,
+            Devices:      devices,
             UploadedAt:   time.Now().UTC(),
         }
 
@@ -116,8 +154,6 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
             log.Printf("Failed to save creative %s: %v", fileHeader.Filename, err)
             continue
         }
-
-        creative.CampaignID = campaignID
 
         uploadedCreatives = append(uploadedCreatives, creative)
     }
@@ -161,10 +197,18 @@ func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http
         return
     }
 
-    for _, c := range creatives {
-        if c != nil {
-            c.CampaignID = campaignID
-        }
+    w.Header().Set("Content-Type", "application/json")
+    if err := json.NewEncoder(w).Encode(creatives); err != nil {
+        log.Printf("Error encoding response: %v", err)
+    }
+}
+
+func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) {
+    creatives, err := h.repo.ListAll(r.Context())
+    if err != nil {
+        log.Printf("Failed to list creatives: %v", err)
+        http.Error(w, "Failed to list creatives", http.StatusInternalServerError)
+        return
     }
 
     w.Header().Set("Content-Type", "application/json")

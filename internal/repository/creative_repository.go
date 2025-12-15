@@ -5,12 +5,14 @@ import (
     "database/sql"
     "fmt"
 
+    "github.com/lib/pq"
     "scm/internal/models"
 )
 
 type CreativeRepository interface {
     Create(ctx context.Context, creative *models.Creative) error
     GetByID(ctx context.Context, id string) (*models.Creative, error)
+    ListAll(ctx context.Context) ([]*models.Creative, error)
     ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error)
     Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error
     Delete(ctx context.Context, id string) error
@@ -28,8 +30,8 @@ func NewCreativeRepository(db *sql.DB) CreativeRepository {
 func (r *creativeRepository) Create(ctx context.Context, creative *models.Creative) error {
     query := `
         INSERT INTO creatives (
-            id, name, type, url, file_path, size, uploaded_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING uploaded_at
     `
     
@@ -42,6 +44,10 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
         creative.URL,
         creative.FilePath,
         creative.Size,
+        creative.CampaignID,
+        pq.Array(creative.SelectedDays),
+        pq.Array(creative.TimeSlots),
+        pq.Array(creative.Devices),
         creative.UploadedAt,
     ).Scan(&creative.UploadedAt)
     
@@ -50,7 +56,7 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
 
 func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Creative, error) {
     query := `
-        SELECT id, name, type, url, file_path, size, uploaded_at
+        SELECT id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
         FROM creatives
         WHERE id = $1
     `
@@ -63,6 +69,10 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         &creative.URL,
         &creative.FilePath,
         &creative.Size,
+        &creative.CampaignID,
+        pq.Array(&creative.SelectedDays),
+        pq.Array(&creative.TimeSlots),
+        pq.Array(&creative.Devices),
         &creative.UploadedAt,
     )
     
@@ -76,14 +86,51 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
     return &creative, nil
 }
 
+func (r *creativeRepository) ListAll(ctx context.Context) ([]*models.Creative, error) {
+    query := `
+        SELECT
+            id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+        FROM creatives
+        ORDER BY uploaded_at DESC
+    `
+
+    rows, err := r.db.QueryContext(ctx, query)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var creatives []*models.Creative
+    for rows.Next() {
+        var creative models.Creative
+        if err := rows.Scan(
+            &creative.ID,
+            &creative.Name,
+            &creative.Type,
+            &creative.URL,
+            &creative.FilePath,
+            &creative.Size,
+            &creative.CampaignID,
+            pq.Array(&creative.SelectedDays),
+            pq.Array(&creative.TimeSlots),
+            pq.Array(&creative.Devices),
+            &creative.UploadedAt,
+        ); err != nil {
+            return nil, err
+        }
+        creatives = append(creatives, &creative)
+    }
+
+    return creatives, rows.Err()
+}
+
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error) {
     query := `
-        SELECT DISTINCT
-            c.id, c.name, c.type, c.url, c.file_path, c.size, c.uploaded_at
-        FROM creatives c
-        JOIN creative_assignments ca ON ca.creative_id = c.id
-        WHERE ca.campaign_id = $1
-        ORDER BY c.uploaded_at DESC
+        SELECT
+            id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+        FROM creatives
+        WHERE campaign_id = $1
+        ORDER BY uploaded_at DESC
     `
     
     rows, err := r.db.QueryContext(ctx, query, campaignID)
@@ -102,6 +149,10 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
             &creative.URL,
             &creative.FilePath,
             &creative.Size,
+            &creative.CampaignID,
+            pq.Array(&creative.SelectedDays),
+            pq.Array(&creative.TimeSlots),
+            pq.Array(&creative.Devices),
             &creative.UploadedAt,
         ); err != nil {
             return nil, err

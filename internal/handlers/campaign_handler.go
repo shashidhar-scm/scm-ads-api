@@ -4,15 +4,26 @@ package handlers
 import (
     "database/sql"
     "encoding/json"
+    "errors"
     "log"
     "net/http"
     "time"
 
     "github.com/go-chi/chi/v5"
     "github.com/go-playground/validator/v10"
+    "github.com/lib/pq"
     "scm/internal/interfaces"
     "scm/internal/models"
 )
+
+func writeJSONErrorCampaign(w http.ResponseWriter, status int, code string, message string) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    _ = json.NewEncoder(w).Encode(map[string]any{
+        "error":   code,
+        "message": message,
+    })
+}
 
 type CampaignHandler struct {
     repo      interfaces.CampaignRepository
@@ -31,18 +42,19 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
     log.Println("=== CreateCampaign handler called ===")
     var req models.CreateCampaignRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        writeJSONErrorCampaign(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
     }
 
     if err := h.validator.Struct(req); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+        writeJSONErrorCampaign(w, http.StatusBadRequest, "validation_error", err.Error())
         return
     }
 
     campaign := &models.Campaign{
         Name:         req.Name,
         Status:       models.CampaignStatusDraft,
+        Cities:       req.Cities,
         StartDate:    req.StartDate,
         EndDate:      req.EndDate,
         Budget:       req.Budget,
@@ -52,7 +64,18 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
     }
     log.Println("Campaign created:", campaign)
     if err := h.repo.Create(r.Context(), campaign); err != nil {
-        http.Error(w, "Failed to create campaign: "+err.Error(), http.StatusInternalServerError)
+        var pqErr *pq.Error
+        if errors.As(err, &pqErr) {
+            if pqErr.Code == "23503" {
+                if pqErr.Constraint == "campaigns_advertiser_id_fkey" {
+                    writeJSONErrorCampaign(w, http.StatusBadRequest, "invalid_advertiser_id", "Advertiser not found")
+                    return
+                }
+                writeJSONErrorCampaign(w, http.StatusBadRequest, "foreign_key_violation", "Invalid reference")
+                return
+            }
+        }
+        writeJSONErrorCampaign(w, http.StatusInternalServerError, "create_campaign_failed", "Failed to create campaign")
         return
     }
 
@@ -149,6 +172,9 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     }
     if req.Status != nil {
         existingCampaign.Status = models.CampaignStatus(*req.Status)
+    }
+    if req.Cities != nil {
+        existingCampaign.Cities = *req.Cities
     }
     if req.StartDate != nil {
         existingCampaign.StartDate = *req.StartDate

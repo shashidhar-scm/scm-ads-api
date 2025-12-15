@@ -30,6 +30,7 @@ CREATE TABLE campaigns (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     status VARCHAR(50) DEFAULT 'draft',
+    cities TEXT[] NOT NULL DEFAULT '{}',
     start_date TIMESTAMP WITH TIME ZONE NOT NULL,
     end_date TIMESTAMP WITH TIME ZONE NOT NULL,
     budget DECIMAL(10, 2) NOT NULL,
@@ -50,21 +51,13 @@ CREATE TABLE creatives (
     url TEXT NOT NULL,
     file_path TEXT NOT NULL,
     size BIGINT NOT NULL,
-    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC')
-);
-
--- Creative assignments table
-CREATE TABLE creative_assignments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    selected_days TEXT[] NOT NULL, -- Array of days: ['monday', 'tuesday', ...]
-    time_slots TEXT[] NOT NULL,    -- Array of time slots: ['08:00-10:00', ...]
-    devices TEXT[],                -- Array of device names: ['Mall Display 1', ...]
     campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    creative_id UUID NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC')
+    selected_days TEXT[] NOT NULL DEFAULT '{}',
+    time_slots TEXT[] NOT NULL DEFAULT '{}',
+    devices TEXT[] NOT NULL DEFAULT '{}',
+    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() AT TIME ZONE 'UTC')
 );
 
 -- Indexes
 CREATE INDEX idx_campaigns_advertiser_id ON campaigns(advertiser_id);
-CREATE INDEX idx_creative_assignments_campaign_id ON creative_assignments(campaign_id);
-CREATE INDEX idx_creative_assignments_creative_id ON creative_assignments(creative_id);
+CREATE INDEX idx_creatives_campaign_id ON creatives(campaign_id);
