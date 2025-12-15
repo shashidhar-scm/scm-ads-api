@@ -19,6 +19,7 @@ func RegisterUserRoutes(router chi.Router, db *sql.DB) {
             r.Get("/", userHandler.GetUser)
             r.Put("/", userHandler.UpdateUser)
             r.Put("/password", userHandler.ChangePassword)
+            r.Delete("/", userHandler.DeleteUser)
         })
     })
 }

@@ -16,6 +16,7 @@ type UserRepository interface {
 	ListAll(ctx context.Context) ([]models.User, error)
 	UpdateProfile(ctx context.Context, id string, req *models.UpdateUserRequest) error
 	UpdatePasswordHash(ctx context.Context, userID string, passwordHash string) error
+	Delete(ctx context.Context, id string) error
 }
 
 type userRepository struct {
@@ -137,6 +138,21 @@ func (r *userRepository) UpdateProfile(ctx context.Context, id string, req *mode
 			return fmt.Errorf("user not found")
 		}
 		return err
+	}
+	return nil
+}
+
+func (r *userRepository) Delete(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("user not found")
 	}
 	return nil
 }
