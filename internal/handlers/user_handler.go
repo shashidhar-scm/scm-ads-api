@@ -150,12 +150,15 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
     if err := h.users.Delete(r.Context(), id); err != nil {
         if err.Error() == "user not found" {
-            http.Error(w, "User not found", http.StatusNotFound)
+            w.Header().Set("Content-Type", "application/json")
+            w.WriteHeader(http.StatusNotFound)
+            _ = json.NewEncoder(w).Encode(map[string]any{"error": "user_not_found", "message": "User not found"})
             return
         }
         http.Error(w, "Failed to delete user", http.StatusInternalServerError)
         return
     }
 
-    w.WriteHeader(http.StatusNoContent)
+    w.Header().Set("Content-Type", "application/json")
+    _ = json.NewEncoder(w).Encode(map[string]any{"message": "User has been deleted successfully"})
 }

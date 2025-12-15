@@ -6,12 +6,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 	"scm/internal/config"
 	"scm/internal/models"
@@ -49,17 +51,17 @@ func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender)
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req models.SignupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "hash_failed", "Failed to create user")
 		return
 	}
 
@@ -74,7 +76,37 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.users.Create(r.Context(), u); err != nil {
-		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			// 23505 = unique_violation
+			if pqErr.Code == "23505" {
+				switch pqErr.Constraint {
+				case "users_email_key":
+					writeJSONError(w, http.StatusBadRequest, "email_already_exists", "Email already exists")
+					return
+				case "users_user_name_key":
+					writeJSONError(w, http.StatusBadRequest, "user_name_already_exists", "User name already exists")
+					return
+				case "users_phone_number_key":
+					writeJSONError(w, http.StatusBadRequest, "phone_number_already_exists", "Phone number already exists")
+					return
+				default:
+					writeJSONError(w, http.StatusBadRequest, "unique_violation", "User already exists")
+					return
+				}
+			}
+			// 42P01 = undefined_table (migrations not applied)
+			if pqErr.Code == "42P01" {
+				writeJSONError(w, http.StatusInternalServerError, "schema_missing", "Database schema not initialized (missing table)")
+				return
+			}
+		}
+
+		if h.cfg.AuthVerboseErrors {
+			writeJSONError(w, http.StatusInternalServerError, "create_user_failed", err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "create_user_failed", "Failed to create user")
 		return
 	}
 
