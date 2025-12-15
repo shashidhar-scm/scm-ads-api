@@ -14,6 +14,7 @@ type Config struct {
 	DatabaseURL string
 	AuthVerboseErrors bool
 	AuthReturnResetToken bool
+	AuthResetPasswordURL string
 
 	JWTSecret           string
 	JWTExpiresInSeconds int64
@@ -56,13 +57,14 @@ func Load() *Config {
 
 		JWTSecret:           getEnv("JWT_SECRET", "dev-secret"),
 		JWTExpiresInSeconds: getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
+		AuthResetPasswordURL: getEnv("AUTH_RESET_PASSWORD_URL", "https://scm-ads.citypost.us/reset-password"),
 
-		SMTPHost:     getEnv("SMTP_HOST", ""),
-		SMTPPort:     getEnv("SMTP_PORT", ""),
-		SMTPUser:     getEnv("SMTP_USER", ""),
-		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
-		SMTPFrom:     getEnv("SMTP_FROM", ""),
-		SMTPUseTLS:   getEnvBool("SMTP_USE_TLS", false),
+		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUser:     getEnv("SMTP_USER", "citypost@smartcitymedia.us"),
+		SMTPPassword: getEnv("SMTP_PASSWORD", "iwud bnba gmpi dbct"),
+		SMTPFrom:     getEnv("SMTP_FROM", "citypost@smartcitymedia.us"),
+		SMTPUseTLS:   getEnvBool("SMTP_USE_TLS", true),
 	}
 }
 

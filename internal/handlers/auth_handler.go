@@ -7,7 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -209,11 +213,42 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt,
 		CreatedAt: time.Now().UTC(),
 	}
-	_ = h.resets.Create(r.Context(), prt)
+	if err := h.resets.Create(r.Context(), prt); err != nil {
+		log.Printf("forgot-password: failed to create reset token for user_id=%s: %v", u.ID, err)
+	}
 
 	subject := "Reset your password"
-	body := "Use this token to reset your password:\n\n" + rawToken + "\n\nThis token expires in 30 minutes."
-	_ = h.mailer.Send(u.Email, subject, body)
+	resetURL := h.cfg.AuthResetPasswordURL
+	if resetURL != "" {
+		sep := "?"
+		if strings.Contains(resetURL, "?") {
+			sep = "&"
+		}
+		resetURL = resetURL + sep + "token=" + url.QueryEscape(rawToken)
+	}
+	expiresInMinutes := int64(30)
+	if seconds := int64(1800); seconds > 0 {
+		expiresInMinutes = seconds / 60
+	}
+	body := "<html><body style=\"font-family:Arial,sans-serif; color:#111;\">" +
+		"<h2 style=\"margin:0 0 12px 0;\">Reset your password</h2>" +
+		"<p style=\"margin:0 0 16px 0;\">We received a request to reset your password.</p>"
+	if resetURL != "" {
+		body += "<p style=\"margin:0 0 20px 0;\">" +
+			"<a href=\"" + resetURL + "\" style=\"display:inline-block; background:#2563eb; color:#ffffff; text-decoration:none; padding:12px 18px; border-radius:8px; font-weight:600;\">Reset</a>" +
+			"</p>"
+	}
+	body += "<p style=\"margin:0 0 8px 0;\">If the button doesn’t work, copy and paste this link into your browser:</p>"
+	if resetURL != "" {
+		body += "<p style=\"margin:0 0 16px 0;\"><a href=\"" + resetURL + "\">" + resetURL + "</a></p>"
+	}
+	body += "<p style=\"margin:0 0 8px 0;\">If you need it, here is your reset token:</p>" +
+		"<p style=\"margin:0 0 16px 0; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;\">" + rawToken + "</p>" +
+		"<p style=\"margin:0; color:#444;\">This token expires in " + strconv.FormatInt(expiresInMinutes, 10) + " minutes.</p>" +
+		"</body></html>"
+	if err := h.mailer.Send(u.Email, subject, body); err != nil {
+		log.Printf("forgot-password: failed to send email to %s: %v", u.Email, err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
