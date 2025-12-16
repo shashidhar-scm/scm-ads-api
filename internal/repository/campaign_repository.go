@@ -96,6 +96,60 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
     return &campaign, nil
 }
 
+func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
+    query := `
+        SELECT
+            COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_campaign_count,
+            COALESCE(SUM(budget), 0) AS total_budget,
+            COALESCE(SUM(impressions), 0) AS total_impression
+        FROM campaigns
+        WHERE 1=1
+    `
+
+    var args []interface{}
+    var whereClauses []string
+    argPos := 1
+
+    if filter.AdvertiserID != "" {
+        whereClauses = append(whereClauses, fmt.Sprintf("advertiser_id = $%d", argPos))
+        args = append(args, filter.AdvertiserID)
+        argPos++
+    }
+
+    if filter.Status != "" {
+        whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", argPos))
+        args = append(args, filter.Status)
+        argPos++
+    }
+
+    if !filter.StartDate.IsZero() {
+        whereClauses = append(whereClauses, fmt.Sprintf("start_date >= $%d", argPos))
+        args = append(args, filter.StartDate)
+        argPos++
+    }
+
+    if !filter.EndDate.IsZero() {
+        whereClauses = append(whereClauses, fmt.Sprintf("end_date <= $%d", argPos))
+        args = append(args, filter.EndDate)
+        argPos++
+    }
+
+    if len(whereClauses) > 0 {
+        query += " AND " + strings.Join(whereClauses, " AND ")
+    }
+
+    var summary models.CampaignSummary
+    if err := r.db.QueryRowContext(ctx, query, args...).Scan(
+        &summary.ActiveCampaignCount,
+        &summary.TotalBudget,
+        &summary.TotalImpression,
+    ); err != nil {
+        return nil, err
+    }
+
+    return &summary, nil
+}
+
 // List retrieves a list of campaigns based on the provided filter
 func (r *campaignRepository) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
     query := `

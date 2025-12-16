@@ -114,6 +114,12 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
     filter := interfaces.CampaignFilter{
         Limit: 100, // Default limit to prevent loading too many records
     }
+
+    summary, err := h.repo.Summary(r.Context(), filter)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+        return
+    }
     
     campaigns, err := h.repo.List(r.Context(), filter)
     if err != nil {
@@ -126,7 +132,12 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
     }
 
     w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(campaigns)
+    _ = json.NewEncoder(w).Encode(map[string]any{
+        "active_campaign_count": summary.ActiveCampaignCount,
+        "total_budget":          summary.TotalBudget,
+        "total_impression":      summary.TotalImpression,
+        "campaigns":             campaigns,
+    })
 }
 
 // UpdateCampaign handles PUT /api/v1/campaigns/{id}

@@ -24,6 +24,9 @@ func (m *mockCampaignRepo) GetByID(ctx context.Context, id string) (*models.Camp
 func (m *mockCampaignRepo) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
 	return []*models.Campaign{}, nil
 }
+func (m *mockCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
+	return &models.CampaignSummary{}, nil
+}
 func (m *mockCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (m *mockCampaignRepo) Delete(ctx context.Context, id string) error                         { return nil }
 

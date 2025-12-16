@@ -22,6 +22,7 @@ type CampaignRepository interface {
     Create(ctx context.Context, campaign *models.Campaign) error
     GetByID(ctx context.Context, id string) (*models.Campaign, error)
     List(ctx context.Context, filter CampaignFilter) ([]*models.Campaign, error)
+    Summary(ctx context.Context, filter CampaignFilter) (*models.CampaignSummary, error)
     Update(ctx context.Context, id string, campaign *models.Campaign) error
     Delete(ctx context.Context, id string) error
 }

@@ -46,3 +46,9 @@ type UpdateCampaignRequest struct {
     EndDate   *time.Time `json:"end_date,omitempty" validate:"omitempty,gtfield=StartDate"`
     Budget    *float64   `json:"budget,omitempty" validate:"omitempty,gt=0"`
 }
+
+type CampaignSummary struct {
+    ActiveCampaignCount int     `json:"active_campaign_count"`
+    TotalBudget         float64 `json:"total_budget"`
+    TotalImpression     int64   `json:"total_impression"`
+}
