@@ -2,36 +2,62 @@
 package routes
 
 import (
-    "context"
-    "database/sql"
-    "encoding/json"
-    "net/http"
-    "net/url"
-    "os"
-    "time"
-    
-    "github.com/go-chi/chi/v5"
-    "github.com/go-chi/chi/v5/middleware"
-    "scm/internal/config"
-    authmw "scm/internal/middleware"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+	
+	"github.com/go-chi/cors"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"scm/internal/config"
+	authmw "scm/internal/middleware"
 )
 
 func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi.Mux {
-    r := chi.NewRouter()
-    
-    // Middleware
-    r.Use(middleware.RequestID)
-    r.Use(middleware.RealIP)
-    r.Use(middleware.Logger)
-    r.Use(middleware.Recoverer)
+	r := chi.NewRouter()
+	
+	// Middleware
+	allowedOrigins := []string{"*"}
+	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
+		parts := strings.Split(raw, ",")
+		allowedOrigins = allowedOrigins[:0]
+		for _, p := range parts {
+			o := strings.TrimSpace(p)
+			if o != "" {
+				allowedOrigins = append(allowedOrigins, o)
+			}
+		}
+		if len(allowedOrigins) == 0 {
+			allowedOrigins = []string{"*"}
+		}
+	}
 
-    r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(http.StatusOK)
-        _ = json.NewEncoder(w).Encode(map[string]any{"message": "Application Up and running"})
-    })
-    
-    // Health check
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: allowedOrigins,
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders: []string{"Link"},
+		AllowCredentials: false,
+		MaxAge: 300,
+	}))
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": "Application Up and running"})
+	})
+
+	// Health check
     r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
         type dbStatus struct {
             Status string `json:"status"`
