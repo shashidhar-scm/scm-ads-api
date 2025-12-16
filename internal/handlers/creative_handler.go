@@ -273,6 +273,97 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
         return
     }
 
+    if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+        const maxMemory = 32 << 20
+        if err := r.ParseMultipartForm(maxMemory); err != nil {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
+            return
+        }
+
+        var req models.UpdateCreativeRequest
+
+        if name := r.FormValue("name"); name != "" {
+            req.Name = &name
+        }
+
+        if r.MultipartForm != nil {
+            if _, ok := r.MultipartForm.Value["selected_days"]; ok {
+                v := parseFormList(r, "selected_days")
+                req.SelectedDays = &v
+            }
+            if _, ok := r.MultipartForm.Value["time_slots"]; ok {
+                v := parseFormList(r, "time_slots")
+                req.TimeSlots = &v
+            }
+            if _, ok := r.MultipartForm.Value["devices"]; ok {
+                v := parseFormList(r, "devices")
+                req.Devices = &v
+            }
+        }
+
+        var fileHeader *multipart.FileHeader
+        if r.MultipartForm != nil {
+            if fhs := r.MultipartForm.File["file"]; len(fhs) > 0 {
+                fileHeader = fhs[0]
+            } else if fhs := r.MultipartForm.File["files"]; len(fhs) > 0 {
+                fileHeader = fhs[0]
+            }
+        }
+
+        if fileHeader != nil {
+            file, err := fileHeader.Open()
+            if err != nil {
+                writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to open uploaded file")
+                return
+            }
+            defer file.Close()
+
+            key := filepath.Join("creatives", id+filepath.Ext(fileHeader.Filename))
+            uploader := manager.NewUploader(h.s3Client)
+            _, err = uploader.Upload(r.Context(), &s3.PutObjectInput{
+                Bucket: aws.String(h.bucket),
+                Key:    aws.String(key),
+                Body:   file,
+            })
+            if err != nil {
+                log.Printf("Failed to upload file %s to S3: %v", fileHeader.Filename, err)
+                writeJSONErrorResponse(w, http.StatusBadGateway, "upload_failed", "Failed to upload file")
+                return
+            }
+
+            url := strings.TrimRight(h.publicBaseURL, "/") + "/" + key
+            req.URL = &url
+            req.FilePath = &key
+            size := fileHeader.Size
+            req.Size = &size
+            t := getFileType(fileHeader)
+            req.Type = &t
+
+            if req.Name == nil {
+                n := fileHeader.Filename
+                req.Name = &n
+            }
+        }
+
+        if err := h.validator.Struct(req); err != nil {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
+            return
+        }
+
+        if err := h.repo.Update(r.Context(), id, &req); err != nil {
+            if err == sql.ErrNoRows {
+                writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+                return
+            }
+            log.Printf("Failed to update creative: %v", err)
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+            return
+        }
+
+        writeJSONMessage(w, http.StatusOK, "creative updated successfully")
+        return
+    }
+
     var req models.UpdateCreativeRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
         writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")

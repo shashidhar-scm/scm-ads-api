@@ -5,6 +5,7 @@ import (
     "database/sql"
     "encoding/json"
     "errors"
+    "fmt"
     "log"
     "net/http"
     "time"
@@ -267,6 +268,15 @@ func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request)
 
     err := h.repo.Delete(r.Context(), campaignID)
     if err != nil {
+        var blocked *interfaces.DeletionBlockedError
+        if errors.As(err, &blocked) {
+            msg := fmt.Sprintf("Cannot delete %s: referenced by", blocked.Resource)
+            for k, v := range blocked.References {
+                msg += fmt.Sprintf(" %d %s", v, k)
+            }
+            writeJSONErrorResponse(w, http.StatusConflict, "delete_blocked", msg)
+            return
+        }
         if err == sql.ErrNoRows {
             writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
             return

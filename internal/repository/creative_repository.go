@@ -3,8 +3,6 @@ package repository
 import (
     "context"
     "database/sql"
-    "fmt"
-
     "github.com/lib/pq"
     "scm/internal/models"
 )
@@ -78,7 +76,7 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
     
     if err != nil {
         if err == sql.ErrNoRows {
-            return nil, fmt.Errorf("creative not found")
+            return nil, sql.ErrNoRows
         }
         return nil, err
     }
@@ -166,15 +164,42 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
 func (r *creativeRepository) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
     query := `
         UPDATE creatives
-        SET name = COALESCE($1, name)
-        WHERE id = $2
+        SET name = COALESCE($1, name),
+            type = COALESCE($2, type),
+            url = COALESCE($3, url),
+            file_path = COALESCE($4, file_path),
+            size = COALESCE($5, size),
+            selected_days = COALESCE($6::text[], selected_days),
+            time_slots = COALESCE($7::text[], time_slots),
+            devices = COALESCE($8::text[], devices)
+        WHERE id = $9
         RETURNING id
     `
-    
+
+    var selectedDays any
+    if req.SelectedDays != nil {
+        selectedDays = pq.Array(*req.SelectedDays)
+    }
+    var timeSlots any
+    if req.TimeSlots != nil {
+        timeSlots = pq.Array(*req.TimeSlots)
+    }
+    var devices any
+    if req.Devices != nil {
+        devices = pq.Array(*req.Devices)
+    }
+
     err := r.db.QueryRowContext(
         ctx,
         query,
         req.Name,
+        req.Type,
+        req.URL,
+        req.FilePath,
+        req.Size,
+        selectedDays,
+        timeSlots,
+        devices,
         id,
     ).Scan(&id)
     
@@ -194,7 +219,7 @@ func (r *creativeRepository) Delete(ctx context.Context, id string) error {
     }
     
     if rowsAffected == 0 {
-        return fmt.Errorf("creative not found")
+        return sql.ErrNoRows
     }
     
     return nil

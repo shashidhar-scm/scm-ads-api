@@ -325,6 +325,19 @@ func (r *campaignRepository) Update(ctx context.Context, id string, campaign *mo
 
 // Delete removes a campaign by ID
 func (r *campaignRepository) Delete(ctx context.Context, id string) error {
+    var creativeCount int64
+    if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM creatives WHERE campaign_id = $1`, id).Scan(&creativeCount); err != nil {
+        return err
+    }
+    if creativeCount > 0 {
+        return &interfaces.DeletionBlockedError{
+            Resource: "campaign",
+            References: map[string]int64{
+                "creatives": creativeCount,
+            },
+        }
+    }
+
     result, err := r.db.ExecContext(ctx, "DELETE FROM campaigns WHERE id = $1", id)
     if err != nil {
         return err

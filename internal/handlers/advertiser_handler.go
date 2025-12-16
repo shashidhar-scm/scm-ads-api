@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
     "encoding/json"
     "log"
     "net/http"
@@ -151,6 +153,15 @@ func (h *AdvertiserHandler) DeleteAdvertiser(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.repo.Delete(r.Context(), id); err != nil {
+		var blocked *interfaces.DeletionBlockedError
+		if errors.As(err, &blocked) {
+			msg := fmt.Sprintf("Cannot delete %s: referenced by", blocked.Resource)
+			for k, v := range blocked.References {
+				msg += fmt.Sprintf(" %d %s", v, k)
+			}
+			writeJSONErrorResponse(w, http.StatusConflict, "delete_blocked", msg)
+			return
+		}
 		if err == sql.ErrNoRows {
 			writeJSONErrorResponse(w, http.StatusNotFound, "advertiser_not_found", "Advertiser not found")
 			return

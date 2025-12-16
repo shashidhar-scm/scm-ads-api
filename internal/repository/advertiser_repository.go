@@ -186,6 +186,20 @@ func (r *advertiserRepository) Update(ctx context.Context, id string, req *model
 }
 
 func (r *advertiserRepository) Delete(ctx context.Context, id string) error {
+	var campaignCount int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaigns WHERE advertiser_id = $1`, id).Scan(&campaignCount); err != nil {
+		log.Printf("Error checking advertiser references: %v", err)
+		return fmt.Errorf("failed to delete advertiser: %w", err)
+	}
+	if campaignCount > 0 {
+		return &interfaces.DeletionBlockedError{
+			Resource: "advertiser",
+			References: map[string]int64{
+				"campaigns": campaignCount,
+			},
+		}
+	}
+
 	query := `DELETE FROM advertisers WHERE id = $1`
 
 	result, err := r.db.ExecContext(ctx, query, id)

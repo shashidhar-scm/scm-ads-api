@@ -30,5 +30,12 @@ type CreateCreativeRequest struct {
 }
 
 type UpdateCreativeRequest struct {
-    Name *string `json:"name,omitempty" validate:"omitempty,min=3"`
+    Name         *string      `json:"name,omitempty" validate:"omitempty,min=1"`
+    Type         *CreativeType `json:"type,omitempty" validate:"omitempty,oneof=image video"`
+    URL          *string      `json:"url,omitempty"`
+    FilePath     *string      `json:"-"`
+    Size         *int64       `json:"size,omitempty"`
+    SelectedDays *[]string    `json:"selected_days,omitempty"`
+    TimeSlots    *[]string    `json:"time_slots,omitempty"`
+    Devices      *[]string    `json:"devices,omitempty"`
 }
