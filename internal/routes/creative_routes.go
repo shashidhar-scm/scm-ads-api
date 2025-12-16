@@ -12,7 +12,8 @@ import (
 
 func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config) {
     creativeRepo := repository.NewCreativeRepository(db)
-    creativeHandler := handlers.NewCreativeHandler(creativeRepo, s3Config)
+    campaignRepo := repository.NewCampaignRepository(db)
+    creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config)
 
     router.Route("/creatives", func(r chi.Router) {
         r.Get("/", creativeHandler.ListCreatives)

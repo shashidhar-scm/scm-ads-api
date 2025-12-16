@@ -17,6 +17,7 @@ import (
     "github.com/go-playground/validator/v10"
     "github.com/google/uuid"
     "scm/internal/config"
+    "scm/internal/interfaces"
     "scm/internal/models"
     "scm/internal/repository"
 )
@@ -25,6 +26,7 @@ import (
 
 type CreativeHandler struct {
     repo      repository.CreativeRepository
+    campaignRepo interfaces.CampaignRepository
     s3Client  *s3.Client
     validator *validator.Validate
     bucket    string
@@ -32,9 +34,10 @@ type CreativeHandler struct {
 }
 
 
-func NewCreativeHandler(repo repository.CreativeRepository, s3Config *config.S3Config) *CreativeHandler {
+func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config) *CreativeHandler {
     return &CreativeHandler{
         repo:      repo,
+        campaignRepo: campaignRepo,
         s3Client:  s3Config.Client,
         bucket:    s3Config.Bucket,
         publicBaseURL: s3Config.PublicBaseURL,
@@ -79,6 +82,26 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     campaignID := r.FormValue("campaign_id")
     if campaignID == "" {
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id is required")
+        return
+    }
+
+    if _, err := uuid.Parse(campaignID); err != nil {
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id must be a valid UUID")
+        return
+    }
+
+    if h.campaignRepo == nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "campaign repository not configured")
+        return
+    }
+
+    if _, err := h.campaignRepo.GetByID(r.Context(), campaignID); err != nil {
+        if err == sql.ErrNoRows {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
+            return
+        }
+        log.Printf("Failed to validate campaign %s: %v", campaignID, err)
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
         return
     }
 
