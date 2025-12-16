@@ -23,6 +23,7 @@ type CampaignRepository interface {
     GetByID(ctx context.Context, id string) (*models.Campaign, error)
     List(ctx context.Context, filter CampaignFilter) ([]*models.Campaign, error)
     Summary(ctx context.Context, filter CampaignFilter) (*models.CampaignSummary, error)
+    ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error)
     Update(ctx context.Context, id string, campaign *models.Campaign) error
     Delete(ctx context.Context, id string) error
 }

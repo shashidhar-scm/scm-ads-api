@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"scm/internal/interfaces"
@@ -26,6 +27,9 @@ func (m *mockCampaignRepo) List(ctx context.Context, filter interfaces.CampaignF
 }
 func (m *mockCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
+}
+func (m *mockCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
+	return 0, nil
 }
 func (m *mockCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (m *mockCampaignRepo) Delete(ctx context.Context, id string) error                         { return nil }

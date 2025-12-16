@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"scm/internal/config"
 	"scm/internal/interfaces"
@@ -20,6 +21,12 @@ func (noopCampaignRepo) Create(ctx context.Context, campaign *models.Campaign) e
 func (noopCampaignRepo) GetByID(ctx context.Context, id string) (*models.Campaign, error) { return nil, nil }
 func (noopCampaignRepo) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
 	return nil, nil
+}
+func (noopCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
+	return &models.CampaignSummary{}, nil
+}
+func (noopCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
+	return 0, nil
 }
 func (noopCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (noopCampaignRepo) Delete(ctx context.Context, id string) error { return nil }

@@ -5,6 +5,7 @@ import (
     "database/sql"
     "errors"
     "fmt"
+	"time"
     "strings"
 	"log"
 
@@ -148,6 +149,35 @@ func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.Camp
     }
 
     return &summary, nil
+}
+
+func (r *campaignRepository) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
+    if scheduledStatus == "" {
+        scheduledStatus = "scheduled"
+    }
+
+    if timeZone == "" {
+        timeZone = "UTC"
+    }
+
+    query := `
+        UPDATE campaigns
+        SET status = 'active',
+            updated_at = NOW() AT TIME ZONE 'UTC'
+        WHERE status = $1
+          AND DATE(start_date AT TIME ZONE $3) = DATE($2 AT TIME ZONE $3)
+    `
+
+    res, err := r.db.ExecContext(ctx, query, scheduledStatus, startDate, timeZone)
+    if err != nil {
+        return 0, err
+    }
+
+    rows, err := res.RowsAffected()
+    if err != nil {
+        return 0, err
+    }
+    return rows, nil
 }
 
 // List retrieves a list of campaigns based on the provided filter

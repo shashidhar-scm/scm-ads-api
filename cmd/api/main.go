@@ -7,6 +7,8 @@ import (
     "net/http"
     "os"
     "os/signal"
+    "strconv"
+    "strings"
     "syscall"
     "time"
 
@@ -14,8 +16,88 @@ import (
     "scm/internal/config"
     "scm/internal/db"
     "scm/internal/db/migrations"
+    "scm/internal/repository"
     "scm/internal/routes"
 )
+
+func getEnv(key, defaultValue string) string {
+    v := os.Getenv(key)
+    if strings.TrimSpace(v) == "" {
+        return defaultValue
+    }
+    return v
+}
+
+func parseHHMM(s string, defaultHour int, defaultMinute int) (int, int) {
+    parts := strings.Split(s, ":")
+    if len(parts) != 2 {
+        return defaultHour, defaultMinute
+    }
+    h, err := strconv.Atoi(parts[0])
+    if err != nil {
+        return defaultHour, defaultMinute
+    }
+    m, err := strconv.Atoi(parts[1])
+    if err != nil {
+        return defaultHour, defaultMinute
+    }
+    if h < 0 || h > 23 || m < 0 || m > 59 {
+        return defaultHour, defaultMinute
+    }
+    return h, m
+}
+
+func nextRunAt(now time.Time, loc *time.Location, hour int, minute int) time.Time {
+    localNow := now.In(loc)
+    run := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), hour, minute, 0, 0, loc)
+    if !run.After(localNow) {
+        run = run.Add(24 * time.Hour)
+    }
+    return run
+}
+
+func startScheduledCampaignActivator(ctx context.Context, campaignRepo interface {
+    ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error)
+}) {
+    tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
+    scheduledStatus := getEnv("CAMPAIGN_SCHEDULED_STATUS", "scheduled")
+    hhmm := getEnv("CAMPAIGN_SCHEDULER_TIME", "00:01")
+    hour, minute := parseHHMM(hhmm, 0, 1)
+
+    loc, err := time.LoadLocation(tzName)
+    if err != nil {
+        log.Printf("Invalid CAMPAIGN_SCHEDULER_TZ=%q, falling back to UTC: %v", tzName, err)
+        tzName = "UTC"
+        loc = time.UTC
+    }
+
+    go func() {
+        for {
+            now := time.Now()
+            runAt := nextRunAt(now, loc, hour, minute)
+            delay := time.Until(runAt)
+
+            t := time.NewTimer(delay)
+            select {
+            case <-ctx.Done():
+                t.Stop()
+                return
+            case <-t.C:
+            }
+
+            runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+            rows, err := campaignRepo.ActivateScheduledStartingOn(runCtx, time.Now(), scheduledStatus, tzName)
+            cancel()
+            if err != nil {
+                log.Printf("Failed to activate scheduled campaigns (status=%s tz=%s): %v", scheduledStatus, tzName, err)
+                continue
+            }
+            if rows > 0 {
+                log.Printf("Activated %d scheduled campaign(s) for today (status=%s tz=%s)", rows, scheduledStatus, tzName)
+            }
+        }
+    }()
+}
 
 func main() {
     // Load configuration
@@ -37,6 +119,12 @@ func main() {
     if err := migrations.RunMigrations(database.DB); err != nil {
         log.Fatalf("Failed to run migrations: %v", err)
     }
+
+    // Background jobs
+    jobsCtx, cancelJobs := context.WithCancel(context.Background())
+    defer cancelJobs()
+    campaignRepo := repository.NewCampaignRepository(database.DB)
+    startScheduledCampaignActivator(jobsCtx, campaignRepo)
 
 	// Initialize S3 configuration
     s3Config, err := config.NewS3Config()
@@ -66,6 +154,8 @@ func main() {
     signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
     <-quit
     log.Println("Shutting down server...")
+
+    cancelJobs()
 
     // Give server 5 seconds to finish current requests
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -9,6 +9,7 @@ const (
     CampaignStatusDraft     CampaignStatus = "draft"
     CampaignStatusActive    CampaignStatus = "active"
     CampaignStatusPaused    CampaignStatus = "paused"
+    CampaignStatusScheduled CampaignStatus = "scheduled"
     CampaignStatusCompleted CampaignStatus = "completed"
 )
 
@@ -40,7 +41,7 @@ type CreateCampaignRequest struct {
 
 type UpdateCampaignRequest struct {
     Name      *string    `json:"name,omitempty"`
-    Status    *string    `json:"status,omitempty" validate:"omitempty,oneof=draft active paused completed"`
+    Status    *string    `json:"status,omitempty" validate:"omitempty,oneof=draft active paused scheduled completed"`
     Cities    *[]string  `json:"cities,omitempty"`
     StartDate *time.Time `json:"start_date,omitempty"`
     EndDate   *time.Time `json:"end_date,omitempty" validate:"omitempty,gtfield=StartDate"`
