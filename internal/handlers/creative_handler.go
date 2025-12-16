@@ -1,14 +1,14 @@
 package handlers
 
 import (
-    "database/sql"
-    "encoding/json"
-    "log"
-    "mime/multipart"
-    "net/http"
-    "path/filepath"
-    "strings"
-    "time"
+	"database/sql"
+	"encoding/json"
+	"log"
+	"mime/multipart"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
 
     "github.com/aws/aws-sdk-go-v2/aws"
     "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -238,6 +238,30 @@ func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) 
     if err := json.NewEncoder(w).Encode(creatives); err != nil {
         log.Printf("Error encoding response: %v", err)
     }
+}
+
+func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.Request) {
+	device := chi.URLParam(r, "device")
+	if device == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "device is required")
+		return
+	}
+
+	activeNow := strings.EqualFold(r.URL.Query().Get("active_now"), "true") || r.URL.Query().Get("active_now") == "1"
+
+	now := time.Now().UTC()
+
+	creatives, err := h.repo.ListByDevice(r.Context(), device, activeNow, now)
+	if err != nil {
+		log.Printf("Failed to list creatives by device: %v", err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(creatives); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
 }
 
 // GetCreative handles GET /creatives/{id}

@@ -1,19 +1,21 @@
 package repository
 
 import (
-    "context"
-    "database/sql"
-    "github.com/lib/pq"
-    "scm/internal/models"
+	"context"
+	"database/sql"
+	"time"
+	"github.com/lib/pq"
+	"scm/internal/models"
 )
 
 type CreativeRepository interface {
-    Create(ctx context.Context, creative *models.Creative) error
-    GetByID(ctx context.Context, id string) (*models.Creative, error)
-    ListAll(ctx context.Context) ([]*models.Creative, error)
-    ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error)
-    Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error
-    Delete(ctx context.Context, id string) error
+	Create(ctx context.Context, creative *models.Creative) error
+	GetByID(ctx context.Context, id string) (*models.Creative, error)
+	ListAll(ctx context.Context) ([]*models.Creative, error)
+	ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error)
+	ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time) ([]*models.Creative, error)
+	Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error
+	Delete(ctx context.Context, id string) error
 }
 
 type creativeRepository struct {
@@ -23,7 +25,6 @@ type creativeRepository struct {
 func NewCreativeRepository(db *sql.DB) CreativeRepository {
     return &creativeRepository{db: db}
 }
-
 
 func (r *creativeRepository) Create(ctx context.Context, creative *models.Creative) error {
     query := `
@@ -159,6 +160,82 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
     }
     
     return creatives, rows.Err()
+}
+
+func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time) ([]*models.Creative, error) {
+	query := `
+		SELECT
+			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+		FROM creatives
+		WHERE EXISTS (
+			SELECT 1
+			FROM unnest(devices) dv
+			WHERE lower(trim(dv)) = lower($1)
+		)
+	`
+
+	args := []any{device}
+
+	if activeNow {
+		day := now.Weekday().String()
+		tm := now.Format("15:04")
+
+		query += `
+			AND EXISTS (
+				SELECT 1
+				FROM unnest(selected_days) d
+				WHERE lower(trim(d)) = lower($2)
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM unnest(time_slots) ts
+				WHERE (
+					position('-' in ts) > 0
+					AND $3::time >= split_part(ts, '-', 1)::time
+					AND $3::time <= split_part(ts, '-', 2)::time
+				)
+				OR (
+					position('-' in ts) = 0
+					AND lower(trim(ts)) = lower($4)
+				)
+			)
+		`
+
+		args = append(args, day, tm, tm)
+	}
+
+	query += `
+		ORDER BY uploaded_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var creatives []*models.Creative
+	for rows.Next() {
+		var creative models.Creative
+		if err := rows.Scan(
+			&creative.ID,
+			&creative.Name,
+			&creative.Type,
+			&creative.URL,
+			&creative.FilePath,
+			&creative.Size,
+			&creative.CampaignID,
+			pq.Array(&creative.SelectedDays),
+			pq.Array(&creative.TimeSlots),
+			pq.Array(&creative.Devices),
+			&creative.UploadedAt,
+		); err != nil {
+			return nil, err
+		}
+		creatives = append(creatives, &creative)
+	}
+
+	return creatives, rows.Err()
 }
 
 func (r *creativeRepository) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
