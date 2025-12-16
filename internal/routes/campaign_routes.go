@@ -18,6 +18,7 @@ func RegisterCampaignRoutes(router chi.Router, db *sql.DB) {
 
     router.Route("/campaigns", func(r chi.Router) {
         r.Get("/", campaignHandler.ListCampaigns)
+        r.Get("/advertiser/{advertiserID}", campaignHandler.ListCampaignsByAdvertiser)
         r.Post("/", func(w http.ResponseWriter, r *http.Request) {
             log.Println("POST /campaigns endpoint hit")
             campaignHandler.CreateCampaign(w, r)

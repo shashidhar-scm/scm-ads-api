@@ -11,6 +11,7 @@ import (
 
     "github.com/go-chi/chi/v5"
     "github.com/go-playground/validator/v10"
+    "github.com/google/uuid"
     "github.com/lib/pq"
     "scm/internal/interfaces"
     "scm/internal/models"
@@ -129,6 +130,49 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 
     if campaigns == nil {
         campaigns = []*models.Campaign{} // Return empty array instead of null
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    _ = json.NewEncoder(w).Encode(map[string]any{
+        "active_campaign_count": summary.ActiveCampaignCount,
+        "total_budget":          summary.TotalBudget,
+        "total_impression":      summary.TotalImpression,
+        "campaigns":             campaigns,
+    })
+}
+
+// ListCampaignsByAdvertiser handles GET /api/v1/campaigns/advertiser/{advertiserID}
+func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *http.Request) {
+    advertiserID := chi.URLParam(r, "advertiserID")
+    if advertiserID == "" {
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "advertiserID is required")
+        return
+    }
+
+    if _, err := uuid.Parse(advertiserID); err != nil {
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "advertiserID must be a valid UUID")
+        return
+    }
+
+    filter := interfaces.CampaignFilter{
+        AdvertiserID: advertiserID,
+        Limit:        100,
+    }
+
+    summary, err := h.repo.Summary(r.Context(), filter)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+        return
+    }
+
+    campaigns, err := h.repo.List(r.Context(), filter)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+        return
+    }
+
+    if campaigns == nil {
+        campaigns = []*models.Campaign{}
     }
 
     w.Header().Set("Content-Type", "application/json")

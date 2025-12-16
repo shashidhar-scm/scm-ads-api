@@ -16,6 +16,31 @@ import (
 
 type mockCampaignRepo struct{}
 
+func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
+	h := NewCampaignHandler(&mockCampaignRepo{})
+	r := chi.NewRouter()
+	r.Get("/campaigns/advertiser/{advertiserID}", h.ListCampaignsByAdvertiser)
+
+	// valid UUID
+	req := httptest.NewRequest(http.MethodGet, "/campaigns/advertiser/550e8400-e29b-41d4-a716-446655440000", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected application/json got %q", ct)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if _, ok := resp["campaigns"]; !ok {
+		t.Fatalf("expected campaigns field, got %v", resp)
+	}
+}
+
 var _ interfaces.CampaignRepository = (*mockCampaignRepo)(nil)
 
 func (m *mockCampaignRepo) Create(ctx context.Context, campaign *models.Campaign) error { return nil }
