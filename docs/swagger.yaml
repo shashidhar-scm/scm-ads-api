@@ -1,5 +1,21 @@
 basePath: /
 definitions:
+  handlers.DeviceResponse:
+    properties:
+      device_name:
+        type: string
+      host_name:
+        type: string
+    type: object
+  handlers.DevicesListResponse:
+    properties:
+      devices:
+        items:
+          $ref: '#/definitions/handlers.DeviceResponse'
+        type: array
+      total:
+        type: integer
+    type: object
   models.Advertiser:
     properties:
       created_at:
@@ -1068,6 +1084,47 @@ paths:
       summary: Upload creatives
       tags:
       - Creatives
+  /api/v1/devices:
+    get:
+      parameters:
+      - collectionFormat: csv
+        description: Repeatable project:region pairs (e.g. target=kcmo:kc). If provided,
+          project/region are ignored.
+        in: query
+        items:
+          type: string
+        name: target
+        type: array
+      - description: Project (e.g. kcmo)
+        in: query
+        name: project
+        type: string
+      - description: Region (e.g. kc)
+        in: query
+        name: region
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.DevicesListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List devices
+      tags:
+      - Devices
   /api/v1/users/:
     get:
       produces:
