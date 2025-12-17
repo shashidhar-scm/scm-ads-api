@@ -1,4 +1,12 @@
 // cmd/api/main.go
+//
+// @title SCM Ads API
+// @version 1.0.0
+// @description SCM Ads API documentation
+// @BasePath /
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 package main
 
 import (

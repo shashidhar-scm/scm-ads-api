@@ -1,0 +1,1258 @@
+basePath: /
+definitions:
+  models.Advertiser:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        maxLength: 255
+        minLength: 3
+        type: string
+      updated_at:
+        type: string
+    required:
+    - name
+    type: object
+  models.Campaign:
+    properties:
+      advertiser_id:
+        type: string
+      budget:
+        type: number
+      cities:
+        items:
+          type: string
+        type: array
+      clicks:
+        type: integer
+      created_at:
+        type: string
+      ctr:
+        type: number
+      end_date:
+        type: string
+      id:
+        type: string
+      impressions:
+        type: integer
+      name:
+        type: string
+      spent:
+        type: number
+      start_date:
+        type: string
+      status:
+        $ref: '#/definitions/models.CampaignStatus'
+      updated_at:
+        type: string
+    required:
+    - advertiser_id
+    - budget
+    - end_date
+    - name
+    - start_date
+    type: object
+  models.CampaignStatus:
+    enum:
+    - draft
+    - active
+    - paused
+    - scheduled
+    - completed
+    type: string
+    x-enum-varnames:
+    - CampaignStatusDraft
+    - CampaignStatusActive
+    - CampaignStatusPaused
+    - CampaignStatusScheduled
+    - CampaignStatusCompleted
+  models.ChangePasswordRequest:
+    properties:
+      new_password:
+        type: string
+      old_password:
+        type: string
+    type: object
+  models.CreateAdvertiserRequest:
+    properties:
+      created_by:
+        type: string
+      email:
+        type: string
+      name:
+        maxLength: 255
+        minLength: 3
+        type: string
+    required:
+    - created_by
+    - name
+    type: object
+  models.CreateCampaignRequest:
+    properties:
+      advertiser_id:
+        type: string
+      budget:
+        type: number
+      cities:
+        items:
+          type: string
+        type: array
+      end_date:
+        type: string
+      name:
+        type: string
+      start_date:
+        type: string
+    required:
+    - advertiser_id
+    - budget
+    - end_date
+    - name
+    - start_date
+    type: object
+  models.Creative:
+    properties:
+      campaign_id:
+        type: string
+      devices:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      name:
+        type: string
+      selected_days:
+        items:
+          type: string
+        type: array
+      size:
+        type: integer
+      time_slots:
+        items:
+          type: string
+        type: array
+      type:
+        allOf:
+        - $ref: '#/definitions/models.CreativeType'
+        enum:
+        - image
+        - video
+      uploaded_at:
+        type: string
+      url:
+        type: string
+    required:
+    - campaign_id
+    - name
+    - type
+    type: object
+  models.CreativeType:
+    enum:
+    - image
+    - video
+    type: string
+    x-enum-varnames:
+    - CreativeTypeImage
+    - CreativeTypeVideo
+  models.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  models.LoginRequest:
+    properties:
+      identifier:
+        type: string
+      password:
+        type: string
+    required:
+    - identifier
+    - password
+    type: object
+  models.LoginResponse:
+    properties:
+      access_token:
+        type: string
+      email:
+        type: string
+      expires_in:
+        type: integer
+      name:
+        type: string
+      phone_number:
+        type: string
+      user_name:
+        type: string
+    type: object
+  models.ResetPasswordRequest:
+    properties:
+      new_password:
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - new_password
+    - token
+    type: object
+  models.SignupRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        minLength: 8
+        type: string
+      phone_number:
+        type: string
+      user_name:
+        type: string
+    required:
+    - email
+    - name
+    - password
+    - phone_number
+    - user_name
+    type: object
+  models.UpdateAdvertiserRequest:
+    properties:
+      email:
+        type: string
+      name:
+        maxLength: 255
+        minLength: 3
+        type: string
+    type: object
+  models.UpdateCampaignRequest:
+    properties:
+      budget:
+        type: number
+      cities:
+        items:
+          type: string
+        type: array
+      end_date:
+        type: string
+      name:
+        type: string
+      start_date:
+        type: string
+      status:
+        enum:
+        - draft
+        - active
+        - paused
+        - scheduled
+        - completed
+        type: string
+    type: object
+  models.UpdateCreativeRequest:
+    properties:
+      devices:
+        items:
+          type: string
+        type: array
+      name:
+        minLength: 1
+        type: string
+      selected_days:
+        items:
+          type: string
+        type: array
+      size:
+        type: integer
+      time_slots:
+        items:
+          type: string
+        type: array
+      type:
+        allOf:
+        - $ref: '#/definitions/models.CreativeType'
+        enum:
+        - image
+        - video
+      url:
+        type: string
+    type: object
+  models.UpdateUserRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      phone_number:
+        type: string
+      user_name:
+        type: string
+    type: object
+  models.User:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      phone_number:
+        type: string
+      user_name:
+        type: string
+    required:
+    - email
+    type: object
+info:
+  contact: {}
+  description: SCM Ads API documentation
+  title: SCM Ads API
+  version: 1.0.0
+paths:
+  /api/v1/advertisers/:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Advertiser'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List advertisers
+      tags:
+      - Advertisers
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Create advertiser request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateAdvertiserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Advertiser'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create advertiser
+      tags:
+      - Advertisers
+  /api/v1/advertisers/{id}/:
+    delete:
+      parameters:
+      - description: Advertiser ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete advertiser
+      tags:
+      - Advertisers
+    get:
+      parameters:
+      - description: Advertiser ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Advertiser'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get advertiser
+      tags:
+      - Advertisers
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Advertiser ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update advertiser request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateAdvertiserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Advertiser'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update advertiser
+      tags:
+      - Advertisers
+  /api/v1/auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Forgot password request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Forgot password
+      tags:
+      - Account
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Login request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login
+      tags:
+      - Account
+  /api/v1/auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Reset password request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Reset password
+      tags:
+      - Account
+  /api/v1/auth/signup:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Signup request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.SignupRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Signup
+      tags:
+      - Account
+  /api/v1/campaigns/:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List campaigns
+      tags:
+      - Campaigns
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Create campaign request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateCampaignRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Campaign'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create campaign
+      tags:
+      - Campaigns
+  /api/v1/campaigns/{id}/:
+    delete:
+      parameters:
+      - description: Campaign ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete campaign
+      tags:
+      - Campaigns
+    get:
+      parameters:
+      - description: Campaign ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Campaign'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get campaign
+      tags:
+      - Campaigns
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Campaign ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update campaign request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateCampaignRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Campaign'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update campaign
+      tags:
+      - Campaigns
+  /api/v1/campaigns/advertiser/{advertiserID}:
+    get:
+      parameters:
+      - description: Advertiser ID
+        in: path
+        name: advertiserID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List campaigns by advertiser
+      tags:
+      - Campaigns
+  /api/v1/creatives/:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Creative'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List creatives
+      tags:
+      - Creatives
+  /api/v1/creatives/{id}/:
+    delete:
+      parameters:
+      - description: Creative ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete creative
+      tags:
+      - Creatives
+    get:
+      parameters:
+      - description: Creative ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Creative'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get creative
+      tags:
+      - Creatives
+    put:
+      consumes:
+      - application/json
+      - multipart/form-data
+      parameters:
+      - description: Creative ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update creative request (JSON)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/models.UpdateCreativeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update creative
+      tags:
+      - Creatives
+  /api/v1/creatives/campaign/{campaignID}:
+    get:
+      parameters:
+      - description: Campaign ID
+        in: path
+        name: campaignID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Creative'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List creatives by campaign
+      tags:
+      - Creatives
+  /api/v1/creatives/device/{device}:
+    get:
+      parameters:
+      - description: Device name
+        in: path
+        name: device
+        required: true
+        type: string
+      - description: Filter by current day and time
+        in: query
+        name: active_now
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Creative'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List creatives by device
+      tags:
+      - Creatives
+  /api/v1/creatives/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Campaign ID
+        in: formData
+        name: campaign_id
+        required: true
+        type: string
+      - description: Selected days (comma separated or repeated)
+        in: formData
+        name: selected_days
+        required: true
+        type: string
+      - description: Time slots (comma separated or repeated)
+        in: formData
+        name: time_slots
+        required: true
+        type: string
+      - description: Devices (comma separated or repeated)
+        in: formData
+        name: devices
+        type: string
+      - description: Creative files
+        in: formData
+        name: files
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            items:
+              $ref: '#/definitions/models.Creative'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload creatives
+      tags:
+      - Creatives
+  /api/v1/users/:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.User'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List users
+      tags:
+      - Account
+  /api/v1/users/{id}/:
+    delete:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete user
+      tags:
+      - Account
+    get:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get user
+      tags:
+      - Account
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update user request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user
+      tags:
+      - Account
+  /api/v1/users/{id}/password:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Change password request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change password
+      tags:
+      - Account
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

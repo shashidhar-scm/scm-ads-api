@@ -57,6 +57,8 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 		_ = json.NewEncoder(w).Encode(map[string]any{"message": "Application Up and running"})
 	})
 
+	RegisterSwaggerRoutes(r)
+
 	// Health check
     r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
         type dbStatus struct {

@@ -18,6 +18,13 @@ func NewUserHandler(users repository.UserRepository) *UserHandler {
     return &UserHandler{users: users}
 }
 
+// @Tags Account
+// @Summary List users
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {array} models.User
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/ [get]
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
     users, err := h.users.ListAll(r.Context())
     if err != nil {
@@ -33,6 +40,16 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
     _ = json.NewEncoder(w).Encode(users)
 }
 
+// @Tags Account
+// @Summary Get user
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "User ID"
+// @Success 200 {object} models.User
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id}/ [get]
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
@@ -54,6 +71,18 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
     _ = json.NewEncoder(w).Encode(u)
 }
 
+// @Tags Account
+// @Summary Update user
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID"
+// @Param body body models.UpdateUserRequest true "Update user request"
+// @Success 200 {object} models.User
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id}/ [put]
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
@@ -86,6 +115,19 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
     _ = json.NewEncoder(w).Encode(updated)
 }
 
+// @Tags Account
+// @Summary Change password
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID"
+// @Param body body models.ChangePasswordRequest true "Change password request"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id}/password [put]
 func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
@@ -140,6 +182,16 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
     writeJSONMessage(w, http.StatusOK, "password updated")
 }
 
+// @Tags Account
+// @Summary Delete user
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "User ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id}/ [delete]
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {

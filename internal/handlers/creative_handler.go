@@ -71,6 +71,20 @@ func parseFormList(r *http.Request, key string) []string {
 }
 
 // UploadCreative handles multiple file uploads to S3
+// @Tags Creatives
+// @Summary Upload creatives
+// @Security BearerAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param campaign_id formData string true "Campaign ID"
+// @Param selected_days formData string true "Selected days (comma separated or repeated)"
+// @Param time_slots formData string true "Time slots (comma separated or repeated)"
+// @Param devices formData string false "Devices (comma separated or repeated)"
+// @Param files formData file true "Creative files"
+// @Success 201 {array} models.Creative
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/upload [post]
 func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request) {
     // 1. Parse the multipart form
     const maxMemory = 32 << 20 // 32MB max memory
@@ -206,6 +220,15 @@ func getFileType(header *multipart.FileHeader) models.CreativeType {
     }
 }
 
+// @Tags Creatives
+// @Summary List creatives by campaign
+// @Security BearerAuth
+// @Produce json
+// @Param campaignID path string true "Campaign ID"
+// @Success 200 {array} models.Creative
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/campaign/{campaignID} [get]
 func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http.Request) {
     campaignID := chi.URLParam(r, "campaignID")
     if campaignID == "" {
@@ -226,6 +249,13 @@ func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http
     }
 }
 
+// @Tags Creatives
+// @Summary List creatives
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {array} models.Creative
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/ [get]
 func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) {
     creatives, err := h.repo.ListAll(r.Context())
     if err != nil {
@@ -240,6 +270,15 @@ func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) 
     }
 }
 
+// @Tags Creatives
+// @Summary List creatives by device
+// @Produce json
+// @Param device path string true "Device name"
+// @Param active_now query bool false "Filter by current day and time"
+// @Success 200 {array} models.Creative
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/device/{device} [get]
 func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.Request) {
 	device := chi.URLParam(r, "device")
 	if device == "" {
@@ -265,6 +304,16 @@ func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.R
 }
 
 // GetCreative handles GET /creatives/{id}
+// @Tags Creatives
+// @Summary Get creative
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Creative ID"
+// @Success 200 {object} models.Creative
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/{id}/ [get]
 func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
@@ -290,6 +339,19 @@ func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateCreative handles PUT /creatives/{id}
+// @Tags Creatives
+// @Summary Update creative
+// @Security BearerAuth
+// @Accept json
+// @Accept multipart/form-data
+// @Produce json
+// @Param id path string true "Creative ID"
+// @Param body body models.UpdateCreativeRequest false "Update creative request (JSON)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/{id}/ [put]
 func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
@@ -412,6 +474,16 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
     writeJSONMessage(w, http.StatusOK, "creative updated successfully")
 }
 // DeleteCreative handles DELETE /creatives/{id}
+// @Tags Creatives
+// @Summary Delete creative
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Creative ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/{id}/ [delete]
 func (h *CreativeHandler) DeleteCreative(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {

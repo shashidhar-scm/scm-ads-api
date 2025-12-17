@@ -39,7 +39,16 @@ func NewCampaignHandler(repo interfaces.CampaignRepository) *CampaignHandler {
     }
 }
 
-// CreateCampaign handles POST /api/v1/campaigns
+// @Tags Campaigns
+// @Summary Create campaign
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param body body models.CreateCampaignRequest true "Create campaign request"
+// @Success 201 {object} models.Campaign
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/ [post]
 func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request) {
     log.Println("=== CreateCampaign handler called ===")
     var req models.CreateCampaignRequest
@@ -86,7 +95,16 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
     json.NewEncoder(w).Encode(campaign)
 }
 
-// GetCampaign handles GET /api/v1/campaigns/{id}
+// @Tags Campaigns
+// @Summary Get campaign
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Campaign ID"
+// @Success 200 {object} models.Campaign
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/{id}/ [get]
 func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
     campaignID := chi.URLParam(r, "id")
     if campaignID == "" {
@@ -108,7 +126,13 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
     json.NewEncoder(w).Encode(campaign)
 }
 
-// ListCampaigns handles GET /api/v1/campaigns
+// @Tags Campaigns
+// @Summary List campaigns
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/ [get]
 func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
     log.Println("=== ListCampaigns handler called ===")
     
@@ -142,7 +166,15 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
     })
 }
 
-// ListCampaignsByAdvertiser handles GET /api/v1/campaigns/advertiser/{advertiserID}
+// @Tags Campaigns
+// @Summary List campaigns by advertiser
+// @Security BearerAuth
+// @Produce json
+// @Param advertiserID path string true "Advertiser ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/advertiser/{advertiserID} [get]
 func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *http.Request) {
     advertiserID := chi.URLParam(r, "advertiserID")
     if advertiserID == "" {
@@ -185,7 +217,18 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
     })
 }
 
-// UpdateCampaign handles PUT /api/v1/campaigns/{id}
+// @Tags Campaigns
+// @Summary Update campaign
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Campaign ID"
+// @Param body body models.UpdateCampaignRequest true "Update campaign request"
+// @Success 200 {object} models.Campaign
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/{id}/ [put]
 func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request) {
     id := chi.URLParam(r, "id")
     if id == "" {
@@ -256,7 +299,17 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     json.NewEncoder(w).Encode(updatedCampaign)
 }
 
-// DeleteCampaign handles DELETE /api/v1/campaigns/{id}
+// @Tags Campaigns
+// @Summary Delete campaign
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Campaign ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/{id}/ [delete]
 func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request) {
     campaignID := chi.URLParam(r, "id")
     log.Println("Deleting campaign with ID:", campaignID)

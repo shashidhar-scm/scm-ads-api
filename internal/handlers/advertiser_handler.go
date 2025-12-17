@@ -25,7 +25,16 @@ func NewAdvertiserHandler(repo interfaces.AdvertiserRepository) *AdvertiserHandl
     }
 }
 
-
+// @Tags Advertisers
+// @Summary Create advertiser
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param body body models.CreateAdvertiserRequest true "Create advertiser request"
+// @Success 201 {object} models.Advertiser
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/advertisers/ [post]
 func (h *AdvertiserHandler) CreateAdvertiser(w http.ResponseWriter, r *http.Request) {
 	log.Println("=== CreateAdvertiser handler called ===")
 	
@@ -56,6 +65,16 @@ func (h *AdvertiserHandler) CreateAdvertiser(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(advertiser)
 }
 
+// @Tags Advertisers
+// @Summary Get advertiser
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Advertiser ID"
+// @Success 200 {object} models.Advertiser
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/advertisers/{id}/ [get]
 func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -77,6 +96,13 @@ func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(advertiser)
 }
 
+// @Tags Advertisers
+// @Summary List advertisers
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {array} models.Advertiser
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/advertisers/ [get]
 func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Request) {
 	advertisers, err := h.repo.List(r.Context())
 	if err != nil {
@@ -92,6 +118,18 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(advertisers)
 }
 
+// @Tags Advertisers
+// @Summary Update advertiser
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Advertiser ID"
+// @Param body body models.UpdateAdvertiserRequest true "Update advertiser request"
+// @Success 200 {object} models.Advertiser
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/advertisers/{id}/ [put]
 func (h *AdvertiserHandler) UpdateAdvertiser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -145,6 +183,17 @@ func (h *AdvertiserHandler) UpdateAdvertiser(w http.ResponseWriter, r *http.Requ
     json.NewEncoder(w).Encode(advertiser)
 }
 
+// @Tags Advertisers
+// @Summary Delete advertiser
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Advertiser ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/advertisers/{id}/ [delete]
 func (h *AdvertiserHandler) DeleteAdvertiser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
