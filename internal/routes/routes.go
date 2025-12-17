@@ -90,10 +90,11 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
     })
     
     // API v1 routes
-    r.Route("/api/v1", func(r chi.Router) {
-        // Public auth routes
-        RegisterAuthRoutes(r, db, cfg)
-        RegisterUserRoutes(r, db)
+	r.Route("/api/v1", func(r chi.Router) {
+		// Public auth routes
+		RegisterAuthRoutes(r, db, cfg)
+		RegisterUserRoutes(r, db)
+		RegisterPublicCreativeRoutes(r, db, s3Config)
 
         r.Get("/debug/env", func(w http.ResponseWriter, r *http.Request) {
             sanitizeDatabaseURL := func(raw string) string {
@@ -144,9 +145,9 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
             _ = json.NewEncoder(w).Encode(resp)
         })
 
-        // Protected routes
-        r.Group(func(r chi.Router) {
-            r.Use(authmw.JWTAuth(cfg.JWTSecret))
+        		// Protected routes
+		r.Group(func(r chi.Router) {
+			r.Use(authmw.JWTAuth(cfg.JWTSecret))
 
             // Register campaign routes
             RegisterCampaignRoutes(r, db)  // Correct order: router first, then db

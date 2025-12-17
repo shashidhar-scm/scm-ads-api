@@ -10,6 +10,14 @@ import (
     "scm/internal/repository"
 )
 
+func RegisterPublicCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config) {
+	creativeRepo := repository.NewCreativeRepository(db)
+	campaignRepo := repository.NewCampaignRepository(db)
+	creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config)
+
+	router.Get("/creatives/device/{device}", creativeHandler.ListCreativesByDevice)
+}
+
 func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config) {
     creativeRepo := repository.NewCreativeRepository(db)
     campaignRepo := repository.NewCampaignRepository(db)
@@ -19,7 +27,6 @@ func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Co
         r.Get("/", creativeHandler.ListCreatives)
         r.Post("/upload", creativeHandler.UploadCreative)
         r.Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)
-		r.Get("/device/{device}", creativeHandler.ListCreativesByDevice)
         r.Route("/{id}", func(r chi.Router) {
             r.Get("/", creativeHandler.GetCreative)
             r.Put("/", creativeHandler.UpdateCreative)
