@@ -16,6 +16,11 @@ type Config struct {
 	AuthReturnResetToken bool
 	AuthResetPasswordURL string
 
+	CityPostConsoleBaseURL   string
+	CityPostConsoleUsername  string
+	CityPostConsolePassword  string
+	CityPostConsoleAuthScheme string
+
 	JWTSecret           string
 	JWTExpiresInSeconds int64
 
@@ -58,6 +63,11 @@ func Load() *Config {
 		JWTSecret:           getEnv("JWT_SECRET", "dev-secret"),
 		JWTExpiresInSeconds: getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
 		AuthResetPasswordURL: getEnv("AUTH_RESET_PASSWORD_URL", "https://scm-ads.citypost.us/reset-password"),
+
+		CityPostConsoleBaseURL:    getEnv("CITYPOST_CONSOLE_BASE_URL", "https://consoleapi.citypost.us/scm-cloud"),
+		CityPostConsoleUsername:   getEnv("CITYPOST_CONSOLE_USERNAME", "girish@smartcitymedia.us"),
+		CityPostConsolePassword:   getEnv("CITYPOST_CONSOLE_PASSWORD", "liv3wire"),
+		CityPostConsoleAuthScheme: getEnv("CITYPOST_CONSOLE_AUTH_SCHEME", "Token"),
 
 		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
 		SMTPPort:     getEnv("SMTP_PORT", "587"),

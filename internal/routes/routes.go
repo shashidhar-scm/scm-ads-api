@@ -156,6 +156,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
             // Register advertiser routes
             RegisterAdvertiserRoutes(r, db)
             RegisterCreativeRoutes(r, db, s3Config)
+			RegisterDeviceRoutes(r, cfg)
 
         })
     })
