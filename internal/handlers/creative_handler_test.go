@@ -28,6 +28,9 @@ func (noopCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignF
 func (noopCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
 	return 0, nil
 }
+func (noopCampaignRepo) CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error) {
+	return 0, nil
+}
 func (noopCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (noopCampaignRepo) Delete(ctx context.Context, id string) error { return nil }
 

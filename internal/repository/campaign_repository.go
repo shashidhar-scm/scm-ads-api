@@ -180,6 +180,39 @@ func (r *campaignRepository) ActivateScheduledStartingOn(ctx context.Context, st
     return rows, nil
 }
 
+func (r *campaignRepository) CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error) {
+    if activeStatus == "" {
+        activeStatus = "active"
+    }
+
+    if completedStatus == "" {
+        completedStatus = "completed"
+    }
+
+    if timeZone == "" {
+        timeZone = "UTC"
+    }
+
+    query := `
+        UPDATE campaigns
+        SET status = $2,
+            updated_at = NOW() AT TIME ZONE 'UTC'
+        WHERE status = $1
+          AND DATE(end_date AT TIME ZONE $4) < DATE($3 AT TIME ZONE $4)
+    `
+
+    res, err := r.db.ExecContext(ctx, query, activeStatus, completedStatus, now, timeZone)
+    if err != nil {
+        return 0, err
+    }
+
+    rows, err := res.RowsAffected()
+    if err != nil {
+        return 0, err
+    }
+    return rows, nil
+}
+
 // List retrieves a list of campaigns based on the provided filter
 func (r *campaignRepository) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
     query := `

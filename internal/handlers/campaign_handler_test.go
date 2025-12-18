@@ -56,6 +56,9 @@ func (m *mockCampaignRepo) Summary(ctx context.Context, filter interfaces.Campai
 func (m *mockCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
 	return 0, nil
 }
+func (m *mockCampaignRepo) CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error) {
+	return 0, nil
+}
 func (m *mockCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (m *mockCampaignRepo) Delete(ctx context.Context, id string) error                         { return nil }
 

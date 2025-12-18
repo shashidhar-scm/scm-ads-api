@@ -33,7 +33,52 @@ func getEnv(key, defaultValue string) string {
     if strings.TrimSpace(v) == "" {
         return defaultValue
     }
+
     return v
+}
+
+func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface {
+	CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)
+}) {
+	tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
+	activeStatus := getEnv("CAMPAIGN_ACTIVE_STATUS", "active")
+	completedStatus := getEnv("CAMPAIGN_COMPLETED_STATUS", "completed")
+	hhmm := getEnv("CAMPAIGN_COMPLETER_TIME", "00:02")
+	hour, minute := parseHHMM(hhmm, 0, 2)
+
+	loc, err := time.LoadLocation(tzName)
+	if err != nil {
+		log.Printf("Invalid CAMPAIGN_SCHEDULER_TZ=%q, falling back to UTC: %v", tzName, err)
+		tzName = "UTC"
+		loc = time.UTC
+	}
+
+	go func() {
+		for {
+			now := time.Now()
+			runAt := nextRunAt(now, loc, hour, minute)
+			delay := time.Until(runAt)
+
+			t := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+
+			runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			rows, err := campaignRepo.CompleteActiveEndedBefore(runCtx, time.Now(), activeStatus, completedStatus, tzName)
+			cancel()
+			if err != nil {
+				log.Printf("Failed to complete ended campaigns (active=%s completed=%s tz=%s): %v", activeStatus, completedStatus, tzName, err)
+				continue
+			}
+			if rows > 0 {
+				log.Printf("Completed %d campaign(s) (active=%s completed=%s tz=%s)", rows, activeStatus, completedStatus, tzName)
+			}
+		}
+	}()
 }
 
 func parseHHMM(s string, defaultHour int, defaultMinute int) (int, int) {
@@ -133,6 +178,7 @@ func main() {
     defer cancelJobs()
     campaignRepo := repository.NewCampaignRepository(database.DB)
     startScheduledCampaignActivator(jobsCtx, campaignRepo)
+	startScheduledCampaignCompleter(jobsCtx, campaignRepo)
 
 	// Initialize S3 configuration
     s3Config, err := config.NewS3Config()
