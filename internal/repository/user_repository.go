@@ -13,6 +13,8 @@ type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*models.User, error)
 	GetByEmail(ctx context.Context, email string) (*models.User, error)
 	GetByIdentifier(ctx context.Context, identifier string) (*models.User, error)
+	List(ctx context.Context, limit int, offset int) ([]models.User, error)
+	Count(ctx context.Context) (int, error)
 	ListAll(ctx context.Context) ([]models.User, error)
 	UpdateProfile(ctx context.Context, id string, req *models.UpdateUserRequest) error
 	UpdatePasswordHash(ctx context.Context, userID string, passwordHash string) error
@@ -93,6 +95,52 @@ func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string)
 		return nil, err
 	}
 	return &u, nil
+}
+
+func (r *userRepository) List(ctx context.Context, limit int, offset int) ([]models.User, error) {
+	query := `
+		SELECT id, email, name, user_name, phone_number, created_at
+		FROM users
+		ORDER BY created_at DESC
+	`
+
+	args := make([]any, 0, 2)
+	argPos := 1
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+
+	return users, rows.Err()
+}
+
+func (r *userRepository) Count(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM users`
+	var total int
+	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 func (r *userRepository) ListAll(ctx context.Context) ([]models.User, error) {

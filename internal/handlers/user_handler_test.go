@@ -22,6 +22,12 @@ func (m *mockUserRepo) GetByEmail(ctx context.Context, email string) (*models.Us
 func (m *mockUserRepo) GetByIdentifier(ctx context.Context, identifier string) (*models.User, error) {
 	return nil, nil
 }
+func (m *mockUserRepo) List(ctx context.Context, limit int, offset int) ([]models.User, error) {
+	return m.ListAll(ctx)
+}
+func (m *mockUserRepo) Count(ctx context.Context) (int, error) {
+	return len(m.users), nil
+}
 func (m *mockUserRepo) ListAll(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for _, u := range m.users {

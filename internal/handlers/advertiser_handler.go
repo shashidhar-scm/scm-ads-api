@@ -104,7 +104,19 @@ func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/advertisers/ [get]
 func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Request) {
-	advertisers, err := h.repo.List(r.Context())
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	total, err := h.repo.Count(r.Context())
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_advertisers_failed", "Failed to list advertisers")
+		return
+	}
+
+	advertisers, err := h.repo.List(r.Context(), p.limit, p.offset)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_advertisers_failed", "Failed to list advertisers")
 		return
@@ -114,8 +126,7 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 		advertisers = []models.Advertiser{} // Return empty array instead of null
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(advertisers)
+	writePaginatedResponse(w, http.StatusOK, advertisers, p.page, p.pageSize, total)
 }
 
 // @Tags Advertisers

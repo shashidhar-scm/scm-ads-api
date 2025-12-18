@@ -36,7 +36,11 @@ func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if _, ok := resp["campaigns"]; !ok {
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got %v", resp)
+	}
+	if _, ok := data["campaigns"]; !ok {
 		t.Fatalf("expected campaigns field, got %v", resp)
 	}
 }
@@ -50,6 +54,7 @@ func (m *mockCampaignRepo) GetByID(ctx context.Context, id string) (*models.Camp
 func (m *mockCampaignRepo) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
 	return []*models.Campaign{}, nil
 }
+func (m *mockCampaignRepo) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) { return 0, nil }
 func (m *mockCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
 }

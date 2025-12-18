@@ -88,14 +88,26 @@ func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.
 	return &advertiser, nil
 }
 
-func (r *advertiserRepository) List(ctx context.Context) ([]models.Advertiser, error) {
+func (r *advertiserRepository) List(ctx context.Context, limit int, offset int) ([]models.Advertiser, error) {
 	query := `
 		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
 		ORDER BY name
 	`
 
-	rows, err := r.db.QueryContext(ctx, query)
+	args := make([]any, 0, 2)
+	argPos := 1
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		log.Printf("Error listing advertisers: %v", err)
 		return nil, fmt.Errorf("failed to list advertisers: %w", err)
@@ -131,6 +143,16 @@ func (r *advertiserRepository) List(ctx context.Context) ([]models.Advertiser, e
 	}
 
 	return advertisers, nil
+}
+
+func (r *advertiserRepository) Count(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM advertisers`
+	var total int
+	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+		log.Printf("Error counting advertisers: %v", err)
+		return 0, fmt.Errorf("failed to count advertisers: %w", err)
+	}
+	return total, nil
 }
 
 func (r *advertiserRepository) Update(ctx context.Context, id string, req *models.UpdateAdvertiserRequest) error {

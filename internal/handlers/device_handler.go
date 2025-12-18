@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -57,6 +56,12 @@ func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
 	targets := r.URL.Query()["target"]
 	if len(targets) == 0 {
 		project := strings.TrimSpace(r.URL.Query().Get("project"))
@@ -100,7 +105,16 @@ func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(DevicesListResponse{Total: len(resp), Devices: resp})
+	total := len(resp)
+	start := p.offset
+	if start > total {
+		start = total
+	}
+	end := start + p.limit
+	if end > total {
+		end = total
+	}
+
+	pageResp := resp[start:end]
+	writePaginatedResponse(w, http.StatusOK, pageResp, p.page, p.pageSize, total)
 }

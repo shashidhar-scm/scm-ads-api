@@ -26,18 +26,29 @@ func NewUserHandler(users repository.UserRepository) *UserHandler {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/users/ [get]
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-    users, err := h.users.ListAll(r.Context())
-    if err != nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
-        return
-    }
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
 
-    if users == nil {
-        users = []models.User{}
-    }
+	total, err := h.users.Count(r.Context())
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(users)
+	users, err := h.users.List(r.Context(), p.limit, p.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
+		return
+	}
+
+	if users == nil {
+		users = []models.User{}
+	}
+
+	writePaginatedResponse(w, http.StatusOK, users, p.page, p.pageSize, total)
 }
 
 // @Tags Account

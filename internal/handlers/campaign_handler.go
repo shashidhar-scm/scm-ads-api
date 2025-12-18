@@ -135,11 +135,20 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/campaigns/ [get]
 func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
     log.Println("=== ListCampaigns handler called ===")
-    
-    // Create a default filter
-    filter := interfaces.CampaignFilter{
-        Limit: 100, // Default limit to prevent loading too many records
-    }
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	filter := interfaces.CampaignFilter{Limit: p.limit, Offset: p.offset}
+
+	total, err := h.repo.Count(r.Context(), filter)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+		return
+	}
 
     summary, err := h.repo.Summary(r.Context(), filter)
     if err != nil {
@@ -157,13 +166,13 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
         campaigns = []*models.Campaign{} // Return empty array instead of null
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(map[string]any{
-        "active_campaign_count": summary.ActiveCampaignCount,
-        "total_budget":          summary.TotalBudget,
-        "total_impression":      summary.TotalImpression,
-        "campaigns":             campaigns,
-    })
+	data := map[string]any{
+		"active_campaign_count": summary.ActiveCampaignCount,
+		"total_budget":          summary.TotalBudget,
+		"total_impression":      summary.TotalImpression,
+		"campaigns":             campaigns,
+	}
+	writePaginatedResponse(w, http.StatusOK, data, p.page, p.pageSize, total)
 }
 
 // @Tags Campaigns
@@ -187,10 +196,23 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
         return
     }
 
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
     filter := interfaces.CampaignFilter{
         AdvertiserID: advertiserID,
-        Limit:        100,
+        Limit:        p.limit,
+        Offset:       p.offset,
     }
+
+	total, err := h.repo.Count(r.Context(), filter)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+		return
+	}
 
     summary, err := h.repo.Summary(r.Context(), filter)
     if err != nil {
@@ -208,13 +230,13 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
         campaigns = []*models.Campaign{}
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(map[string]any{
-        "active_campaign_count": summary.ActiveCampaignCount,
-        "total_budget":          summary.TotalBudget,
-        "total_impression":      summary.TotalImpression,
-        "campaigns":             campaigns,
-    })
+	data := map[string]any{
+		"active_campaign_count": summary.ActiveCampaignCount,
+		"total_budget":          summary.TotalBudget,
+		"total_impression":      summary.TotalImpression,
+		"campaigns":             campaigns,
+	}
+	writePaginatedResponse(w, http.StatusOK, data, p.page, p.pageSize, total)
 }
 
 // @Tags Campaigns

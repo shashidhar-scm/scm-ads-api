@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 	"github.com/lib/pq"
 	"scm/internal/models"
@@ -11,9 +12,12 @@ import (
 type CreativeRepository interface {
 	Create(ctx context.Context, creative *models.Creative) error
 	GetByID(ctx context.Context, id string) (*models.Creative, error)
-	ListAll(ctx context.Context) ([]*models.Creative, error)
-	ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error)
-	ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time) ([]*models.Creative, error)
+	ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error)
+	CountAll(ctx context.Context) (int, error)
+	ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error)
+	CountByCampaign(ctx context.Context, campaignID string) (int, error)
+	ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error)
+	CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error)
 	Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error
 	Delete(ctx context.Context, id string) error
 }
@@ -85,19 +89,31 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
     return &creative, nil
 }
 
-func (r *creativeRepository) ListAll(ctx context.Context) ([]*models.Creative, error) {
-    query := `
-        SELECT
-            id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
-        FROM creatives
-        ORDER BY uploaded_at DESC
-    `
+func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error) {
+	query := `
+		SELECT
+			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+		FROM creatives
+		ORDER BY uploaded_at DESC
+	`
 
-    rows, err := r.db.QueryContext(ctx, query)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	args := make([]any, 0, 2)
+	argPos := 1
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
     var creatives []*models.Creative
     for rows.Next() {
@@ -120,23 +136,45 @@ func (r *creativeRepository) ListAll(ctx context.Context) ([]*models.Creative, e
         creatives = append(creatives, &creative)
     }
 
-    return creatives, rows.Err()
+    	return creatives, rows.Err()
 }
 
-func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string) ([]*models.Creative, error) {
-    query := `
-        SELECT
-            id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
-        FROM creatives
-        WHERE campaign_id = $1
-        ORDER BY uploaded_at DESC
-    `
-    
-    rows, err := r.db.QueryContext(ctx, query, campaignID)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+func (r *creativeRepository) CountAll(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM creatives`
+	var total int
+	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
+	query := `
+		SELECT
+			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+		FROM creatives
+		WHERE campaign_id = $1
+		ORDER BY uploaded_at DESC
+	`
+
+	args := make([]any, 0, 3)
+	args = append(args, campaignID)
+	argPos := 2
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
     
     var creatives []*models.Creative
     for rows.Next() {
@@ -159,10 +197,19 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
         creatives = append(creatives, &creative)
     }
     
-    return creatives, rows.Err()
+    	return creatives, rows.Err()
 }
 
-func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time) ([]*models.Creative, error) {
+func (r *creativeRepository) CountByCampaign(ctx context.Context, campaignID string) (int, error) {
+	query := `SELECT COUNT(*) FROM creatives WHERE campaign_id = $1`
+	var total int
+	if err := r.db.QueryRowContext(ctx, query, campaignID).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
 			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
@@ -175,6 +222,7 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 	`
 
 	args := []any{device}
+	argPos := 2
 
 	if activeNow {
 		day := now.Weekday().String()
@@ -202,11 +250,22 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		`
 
 		args = append(args, day, tm, tm)
+		argPos = 5
 	}
 
 	query += `
 		ORDER BY uploaded_at DESC
 	`
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -236,6 +295,52 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 	}
 
 	return creatives, rows.Err()
+}
+
+func (r *creativeRepository) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM creatives
+		WHERE EXISTS (
+			SELECT 1
+			FROM unnest(devices) dv
+			WHERE lower(trim(dv)) = lower($1)
+		)
+	`
+
+	args := []any{device}
+
+	if activeNow {
+		day := now.Weekday().String()
+		tm := now.Format("15:04")
+		query += `
+			AND EXISTS (
+				SELECT 1
+				FROM unnest(selected_days) d
+				WHERE lower(trim(d)) = lower($2)
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM unnest(time_slots) ts
+				WHERE (
+					position('-' in ts) > 0
+					AND $3::time >= split_part(ts, '-', 1)::time
+					AND $3::time <= split_part(ts, '-', 2)::time
+				)
+				OR (
+					position('-' in ts) = 0
+					AND lower(trim(ts)) = lower($4)
+				)
+			)
+		`
+		args = append(args, day, tm, tm)
+	}
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 func (r *creativeRepository) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {

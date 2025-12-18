@@ -213,6 +213,52 @@ func (r *campaignRepository) CompleteActiveEndedBefore(ctx context.Context, now 
     return rows, nil
 }
 
+func (r *campaignRepository) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) {
+    query := `
+        SELECT COUNT(*)
+        FROM campaigns
+        WHERE 1=1
+    `
+
+    var args []interface{}
+    var whereClauses []string
+    argPos := 1
+
+    if filter.AdvertiserID != "" {
+        whereClauses = append(whereClauses, fmt.Sprintf("advertiser_id = $%d", argPos))
+        args = append(args, filter.AdvertiserID)
+        argPos++
+    }
+
+    if filter.Status != "" {
+        whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", argPos))
+        args = append(args, filter.Status)
+        argPos++
+    }
+
+    if !filter.StartDate.IsZero() {
+        whereClauses = append(whereClauses, fmt.Sprintf("start_date >= $%d", argPos))
+        args = append(args, filter.StartDate)
+        argPos++
+    }
+
+    if !filter.EndDate.IsZero() {
+        whereClauses = append(whereClauses, fmt.Sprintf("end_date <= $%d", argPos))
+        args = append(args, filter.EndDate)
+        argPos++
+    }
+
+    if len(whereClauses) > 0 {
+        query += " AND " + strings.Join(whereClauses, " AND ")
+    }
+
+    var total int
+    if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+        return 0, err
+    }
+    return total, nil
+}
+
 // List retrieves a list of campaigns based on the provided filter
 func (r *campaignRepository) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
     query := `

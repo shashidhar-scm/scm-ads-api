@@ -21,7 +21,10 @@ func (m *mockAdvertiserRepo) Create(ctx context.Context, advertiser *models.Adve
 func (m *mockAdvertiserRepo) GetByID(ctx context.Context, id string) (*models.Advertiser, error) {
 	return nil, sql.ErrNoRows
 }
-func (m *mockAdvertiserRepo) List(ctx context.Context) ([]models.Advertiser, error) { return nil, nil }
+func (m *mockAdvertiserRepo) List(ctx context.Context, limit int, offset int) ([]models.Advertiser, error) {
+	return []models.Advertiser{}, nil
+}
+func (m *mockAdvertiserRepo) Count(ctx context.Context) (int, error) { return 0, nil }
 func (m *mockAdvertiserRepo) Update(ctx context.Context, id string, req *models.UpdateAdvertiserRequest) error {
 	return nil
 }
