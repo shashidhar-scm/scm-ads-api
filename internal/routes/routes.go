@@ -10,12 +10,13 @@ import (
 	"os"
 	"strings"
 	"time"
-	
-	"github.com/go-chi/cors"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"scm/internal/config"
 	authmw "scm/internal/middleware"
+	"scm/internal/services"
 )
 
 func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi.Mux {
@@ -156,7 +157,16 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
             // Register advertiser routes
             RegisterAdvertiserRoutes(r, db)
             RegisterCreativeRoutes(r, db, s3Config)
-			RegisterDeviceRoutes(r, cfg)
+			// Initialize CityPost console client
+			client := services.NewCityPostConsoleClient(
+				cfg.CityPostConsoleBaseURL,
+				cfg.CityPostConsoleUsername,
+				cfg.CityPostConsolePassword,
+			)
+			client.SetAuthScheme(cfg.CityPostConsoleAuthScheme)
+			RegisterSyncRoutes(r, db, client)
+			RegisterProjectRoutes(r, db)
+			RegisterDeviceReadRoutes(r, db)
 
         })
     })

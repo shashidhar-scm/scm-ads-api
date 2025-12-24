@@ -54,7 +54,7 @@ func Load() *Config {
 	}
 
 	return &Config{
-		Port:        getEnv("PORT", "8080"),
+		Port:        getEnv("PORT", "9000"),
 		Environment: getEnv("ENVIRONMENT", "development"),
 		DatabaseURL: databaseURL,
 		AuthVerboseErrors: getEnvBool("AUTH_VERBOSE_ERRORS", false),

@@ -232,3 +232,132 @@ func (c *CityPostConsoleClient) ListDevices(ctx context.Context, project, region
 
 	return out, nil
 }
+
+// ListProjects fetches both production and non-production projects and merges them
+func (c *CityPostConsoleClient) ListProjects(ctx context.Context) ([]map[string]any, error) {
+	projTrue, err := c.fetchProjects(ctx, true)
+	if err != nil {
+		return nil, fmt.Errorf("fetch production projects: %w", err)
+	}
+	projFalse, err := c.fetchProjects(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("fetch non-production projects: %w", err)
+	}
+	merged := append(projTrue, projFalse...)
+	return merged, nil
+}
+
+// fetchProjects is a helper that fetches projects with the given production flag
+func (c *CityPostConsoleClient) fetchProjects(ctx context.Context, production bool) ([]map[string]any, error) {
+	if strings.TrimSpace(c.baseURL) == "" {
+		return nil, errors.New("citypost baseURL is required")
+	}
+
+	u, err := url.Parse(c.baseURL + "/projectsList")
+	if err != nil {
+		return nil, fmt.Errorf("parse projectsList URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("production", fmt.Sprintf("%t", production))
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create projectsList request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do projectsList request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("citypost projectsList failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("citypost projectsList: invalid json: %w", err)
+	}
+
+	projectsRaw, ok := out["projects"]
+	if !ok {
+		return nil, errors.New("citypost projectsList response missing 'projects' field")
+	}
+	projectsSlice, ok := projectsRaw.([]any)
+	if !ok {
+		return nil, errors.New("citypost projectsList 'projects' field is not an array")
+	}
+
+	result := make([]map[string]any, 0, len(projectsSlice))
+	for _, item := range projectsSlice {
+		if m, ok := item.(map[string]any); ok {
+			result = append(result, m)
+		}
+	}
+	return result, nil
+}
+
+// ListDevicesByProject fetches devices for a specific project name
+func (c *CityPostConsoleClient) ListDevicesByProject(ctx context.Context, projectName string) ([]map[string]any, error) {
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return nil, errors.New("project name is required")
+	}
+
+	token, err := c.ensureToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ensure token: %w", err)
+	}
+
+	u, err := url.Parse(c.baseURL + "/device/")
+	if err != nil {
+		return nil, fmt.Errorf("parse device URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("project", projectName)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create device request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", strings.TrimSpace(c.authScheme)+" "+strings.TrimSpace(token))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do device request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("citypost list devices failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("citypost list devices: invalid json: %w", err)
+	}
+
+	devicesRaw, ok := out["devices"]
+	if !ok {
+		return nil, errors.New("citypost list devices response missing 'devices' field")
+	}
+	devicesSlice, ok := devicesRaw.([]any)
+	if !ok {
+		return nil, errors.New("citypost list devices 'devices' field is not an array")
+	}
+
+	result := make([]map[string]any, 0, len(devicesSlice))
+	for _, item := range devicesSlice {
+		if m, ok := item.(map[string]any); ok {
+			result = append(result, m)
+		}
+	}
+	return result, nil
+}

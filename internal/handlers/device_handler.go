@@ -1,120 +1,135 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
-	"strings"
+	"strconv"
 
-	"scm/internal/config"
-	"scm/internal/services"
+	"github.com/go-chi/chi/v5"
+	"scm/internal/models"
+	"scm/internal/repository"
 )
 
-type DeviceHandler struct {
-	client *services.CityPostConsoleClient
+type DeviceReadHandler struct {
+	repo repository.DeviceRepository
 }
 
-type DeviceResponse struct {
-	DeviceName string `json:"device_name"`
-	HostName   string `json:"host_name"`
+func NewDeviceReadHandler(repo repository.DeviceRepository) *DeviceReadHandler {
+	return &DeviceReadHandler{repo: repo}
 }
 
-type DevicesListResponse struct {
-	Total   int             `json:"total"`
-	Devices []DeviceResponse `json:"devices"`
-}
-
-func NewDeviceHandler(client *services.CityPostConsoleClient) *DeviceHandler {
-	return &DeviceHandler{client: client}
-}
-
-
-func NewDeviceHandlerFromConfig(cfg *config.Config) *DeviceHandler {
-	if cfg == nil {
-		return NewDeviceHandler(nil)
-	}
-	baseURL := strings.TrimRight(cfg.CityPostConsoleBaseURL, "/")
-	client := services.NewCityPostConsoleClient(baseURL, cfg.CityPostConsoleUsername, cfg.CityPostConsolePassword)
-	if strings.TrimSpace(cfg.CityPostConsoleAuthScheme) != "" {
-		client.SetAuthScheme(cfg.CityPostConsoleAuthScheme)
-	}
-	return NewDeviceHandler(client)
-}
-
-// @Tags Devices
-// @Summary List devices
-// @Security BearerAuth
-// @Produce json
-// @Param target query []string false "Repeatable project:region pairs (e.g. target=kcmo:kc). If provided, project/region are ignored."
-// @Param project query string false "Project (e.g. kcmo)"
-// @Param region query string false "Region (e.g. kc)"
-// @Success 200 {object} handlers.DevicesListResponse
-// @Failure 400 {object} map[string]interface{}
-// @Failure 502 {object} map[string]interface{}
-// @Router /api/v1/devices [get]
-func (h *DeviceHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
-	if h.client == nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "device client not configured")
-		return
-	}
-
-	p, err := parsePaginationParams(r, 50, 200)
+func (h *DeviceReadHandler) List(w http.ResponseWriter, r *http.Request) {
+	pagination, err := parsePaginationParams(r, 20, 100)
 	if err != nil {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "invalid pagination: "+err.Error())
 		return
 	}
 
-	targets := r.URL.Query()["target"]
-	if len(targets) == 0 {
-		project := strings.TrimSpace(r.URL.Query().Get("project"))
-		region := strings.TrimSpace(r.URL.Query().Get("region"))
-		if project == "" || region == "" {
-			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "either target=project:region (repeatable) or project and region are required")
-			return
+	// Parse filter parameters
+	filters := repository.DeviceFilters{}
+
+	if projectIDStr := r.URL.Query().Get("project_id"); projectIDStr != "" {
+		if projectID, err := strconv.Atoi(projectIDStr); err == nil {
+			filters.ProjectID = &projectID
 		}
-		targets = []string{project + ":" + region}
 	}
 
-	seen := make(map[string]struct{})
-	resp := make([]DeviceResponse, 0)
+	if city := r.URL.Query().Get("city"); city != "" {
+		filters.City = &city
+	}
 
-	for _, t := range targets {
-		parts := strings.SplitN(strings.TrimSpace(t), ":", 2)
-		if len(parts) != 2 {
-			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid target format; expected project:region")
-			return
-		}
-		project := strings.TrimSpace(parts[0])
-		region := strings.TrimSpace(parts[1])
-		if project == "" || region == "" {
-			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid target; project and region are required")
-			return
-		}
+	if region := r.URL.Query().Get("region"); region != "" {
+		filters.Region = &region
+	}
 
-		devices, err := h.client.ListDevices(r.Context(), project, region)
+	if deviceType := r.URL.Query().Get("device_type"); deviceType != "" {
+		filters.DeviceType = &deviceType
+	}
+
+	var devices []*models.Device
+	var total int
+
+	// Use filters if any are provided, otherwise use basic list
+	if filters.ProjectID != nil || filters.City != nil || filters.Region != nil || filters.DeviceType != nil {
+		devices, err = h.repo.ListWithFilters(r.Context(), filters, pagination.limit, pagination.offset)
 		if err != nil {
-			writeJSONErrorResponse(w, http.StatusBadGateway, "upstream_error", err.Error())
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list devices with filters: "+err.Error())
 			return
 		}
 
-		for _, d := range devices {
-			key := d.DeviceName + "|" + d.HostName
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			resp = append(resp, DeviceResponse{DeviceName: d.DeviceName, HostName: d.HostName})
+		total, err = h.repo.CountWithFilters(r.Context(), filters)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count devices with filters: "+err.Error())
+			return
+		}
+	} else {
+		devices, err = h.repo.List(r.Context(), pagination.limit, pagination.offset)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list devices: "+err.Error())
+			return
+		}
+
+		total, err = h.repo.Count(r.Context())
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count devices: "+err.Error())
+			return
 		}
 	}
 
-	total := len(resp)
-	start := p.offset
-	if start > total {
-		start = total
-	}
-	end := start + p.limit
-	if end > total {
-		end = total
+	writePaginatedResponse(w, http.StatusOK, devices, pagination.page, pagination.pageSize, total)
+}
+
+func (h *DeviceReadHandler) Get(w http.ResponseWriter, r *http.Request) {
+	hostName := chi.URLParam(r, "hostName")
+	if hostName == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "device hostName is required")
+		return
 	}
 
-	pageResp := resp[start:end]
-	writePaginatedResponse(w, http.StatusOK, pageResp, p.page, p.pageSize, total)
+	device, err := h.repo.GetByHostName(r.Context(), hostName)
+	if err != nil {
+		if err.Error() == "device not found" {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "device not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to get device: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(device)
+}
+
+func (h *DeviceReadHandler) ListByProject(w http.ResponseWriter, r *http.Request) {
+	projectIDStr := chi.URLParam(r, "projectID")
+	if projectIDStr == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "projectID is required")
+		return
+	}
+	projectID, err := strconv.Atoi(projectIDStr)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "invalid projectID")
+		return
+	}
+
+	pagination, err := parsePaginationParams(r, 20, 100)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "invalid pagination: "+err.Error())
+		return
+	}
+
+	devices, err := h.repo.ListByProject(r.Context(), projectID, pagination.limit, pagination.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list devices by project: "+err.Error())
+		return
+	}
+
+	total, err := h.repo.CountByProject(r.Context(), projectID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count devices by project: "+err.Error())
+		return
+	}
+
+	writePaginatedResponse(w, http.StatusOK, devices, pagination.page, pagination.pageSize, total)
 }
