@@ -1,19 +1,19 @@
 basePath: /
 definitions:
-  handlers.DeviceResponse:
+  handlers.SyncConsoleResponse:
     properties:
-      device_name:
-        type: string
-      host_name:
-        type: string
+      errors:
+        items:
+          type: string
+        type: array
+      synced:
+        $ref: '#/definitions/handlers.SyncCounts'
     type: object
-  handlers.DevicesListResponse:
+  handlers.SyncCounts:
     properties:
       devices:
-        items:
-          $ref: '#/definitions/handlers.DeviceResponse'
-        type: array
-      total:
+        type: integer
+      projects:
         type: integer
     type: object
   models.Advertiser:
@@ -177,6 +177,52 @@ definitions:
     x-enum-varnames:
     - CreativeTypeImage
     - CreativeTypeVideo
+  models.Device:
+    properties:
+      change:
+        type: boolean
+      created_at:
+        description: Local fields
+        type: string
+      description:
+        type: string
+      device_config:
+        description: store as JSONB
+        type: object
+      device_type:
+        $ref: '#/definitions/models.DeviceType'
+      host_name:
+        description: used as business key
+        type: string
+      id:
+        type: integer
+      last_synced_at:
+        type: string
+      name:
+        type: string
+      project:
+        description: foreign key to Project.id (console ID)
+        type: integer
+      region:
+        $ref: '#/definitions/models.Region'
+      rtty_data:
+        type: integer
+      sync_status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.DeviceType:
+    properties:
+      code:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
   models.ForgotPasswordRequest:
     properties:
       email:
@@ -207,6 +253,134 @@ definitions:
       phone_number:
         type: string
       user_name:
+        type: string
+    type: object
+  models.Owner:
+    properties:
+      username:
+        type: string
+    type: object
+  models.Project:
+    properties:
+      ad_poster_frequency:
+        type: integer
+      address:
+        type: string
+      city_poster_frequency:
+        type: integer
+      city_poster_play_time:
+        type: integer
+      company:
+        type: string
+      created_at:
+        description: Local fields
+        type: string
+      description:
+        type: string
+      header:
+        type: boolean
+      id:
+        type: integer
+      is_transit:
+        type: boolean
+      languages:
+        items:
+          type: string
+        type: array
+      latitude:
+        type: string
+      longitude:
+        type: string
+      loop_length:
+        type: integer
+      max_devices:
+        type: integer
+      name:
+        description: used as business key
+        type: string
+      owner:
+        $ref: '#/definitions/models.Owner'
+      priority:
+        type: integer
+      production:
+        type: boolean
+      profile_img:
+        type: string
+      proxy:
+        type: string
+      region:
+        description: array of region IDs
+        items:
+          type: integer
+        type: array
+      replicas:
+        type: integer
+      role:
+        type: string
+      scm_health:
+        type: boolean
+      smallbiz_support:
+        type: boolean
+      status:
+        type: string
+      sub_type:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.Region:
+    properties:
+      ad_poster_frequency:
+        type: integer
+      address:
+        type: string
+      city_poster_frequency:
+        type: integer
+      city_poster_play_time:
+        type: integer
+      code:
+        type: string
+      company:
+        type: string
+      description:
+        type: string
+      header:
+        type: boolean
+      id:
+        type: integer
+      is_transit:
+        type: boolean
+      iso_url:
+        type: string
+      languages:
+        items:
+          type: string
+        type: array
+      latitude:
+        type: string
+      longitude:
+        type: string
+      loop_length:
+        type: integer
+      max_devices:
+        type: integer
+      name:
+        type: string
+      production:
+        type: boolean
+      profile_img:
+        type: string
+      proxy:
+        type: string
+      replicas:
+        type: integer
+      scm_health:
+        type: boolean
+      smallbiz_support:
+        type: boolean
+      sub_type:
+        type: string
+      time_zone:
         type: string
     type: object
   models.ResetPasswordRequest:
@@ -327,6 +501,17 @@ definitions:
         type: string
     required:
     - email
+    type: object
+  models.Venue:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      updated_at:
+        type: string
     type: object
 info:
   contact: {}
@@ -1087,21 +1272,31 @@ paths:
   /api/v1/devices:
     get:
       parameters:
-      - collectionFormat: csv
-        description: Repeatable project:region pairs (e.g. target=kcmo:kc). If provided,
-          project/region are ignored.
+      - default: 1
+        description: Page number
         in: query
-        items:
-          type: string
-        name: target
-        type: array
-      - description: Project (e.g. kcmo)
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
         in: query
-        name: project
+        name: page_size
+        type: integer
+      - description: Filter by project ID
+        in: query
+        name: project_id
+        type: integer
+      - description: Filter by city
+        in: query
+        name: city
         type: string
-      - description: Region (e.g. kc)
+      - description: Filter by region
         in: query
         name: region
+        type: string
+      - description: Filter by device type
+        in: query
+        name: device_type
         type: string
       produces:
       - application/json
@@ -1109,14 +1304,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.DevicesListResponse'
+            additionalProperties: true
+            type: object
         "400":
           description: Bad Request
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Bad Gateway
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties: true
             type: object
@@ -1125,6 +1321,177 @@ paths:
       summary: List devices
       tags:
       - Devices
+  /api/v1/devices/{deviceID}/venues:
+    get:
+      parameters:
+      - description: Device ID
+        in: path
+        name: deviceID
+        required: true
+        type: integer
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List venues by device
+      tags:
+      - Venues
+  /api/v1/devices/{hostName}:
+    get:
+      parameters:
+      - description: Device host name
+        in: path
+        name: hostName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Device'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get device
+      tags:
+      - Devices
+  /api/v1/projects:
+    get:
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List projects
+      tags:
+      - Projects
+  /api/v1/projects/{name}:
+    get:
+      parameters:
+      - description: Project name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Project'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get project
+      tags:
+      - Projects
+  /api/v1/sync/console:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.SyncConsoleResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sync projects and devices from CityPost Console
+      tags:
+      - Sync
   /api/v1/users/:
     get:
       produces:
@@ -1307,6 +1674,339 @@ paths:
       summary: Change password
       tags:
       - Account
+  /api/v1/venues:
+    get:
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List venues
+      tags:
+      - Venues
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Create venue request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.Venue'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Venue'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create venue
+      tags:
+      - Venues
+  /api/v1/venues/{id}:
+    delete:
+      parameters:
+      - description: Venue ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete venue
+      tags:
+      - Venues
+    get:
+      parameters:
+      - description: Venue ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Venue'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get venue
+      tags:
+      - Venues
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Venue ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Update venue request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.Venue'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Venue'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update venue
+      tags:
+      - Venues
+  /api/v1/venues/{id}/devices:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Venue ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Remove devices from venue request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            device_ids:
+              items:
+                type: integer
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Multi-Status
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove devices from venue
+      tags:
+      - Venues
+    get:
+      parameters:
+      - description: Venue ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get devices by venue
+      tags:
+      - Venues
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Venue ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Add devices to venue request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            device_ids:
+              items:
+                type: integer
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Multi-Status
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add devices to venue
+      tags:
+      - Venues
 securityDefinitions:
   BearerAuth:
     in: header

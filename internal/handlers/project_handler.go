@@ -15,6 +15,16 @@ func NewProjectHandler(repo repository.ProjectRepository) *ProjectHandler {
 	return &ProjectHandler{repo: repo}
 }
 
+// @Tags Projects
+// @Summary List projects
+// @Security BearerAuth
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/projects [get]
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination, err := parsePaginationParams(r, 20, 100)
 	if err != nil {
@@ -37,6 +47,16 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	writePaginatedResponse(w, http.StatusOK, projects, pagination.page, pagination.pageSize, total)
 }
 
+// @Tags Projects
+// @Summary Get project
+// @Security BearerAuth
+// @Produce json
+// @Param name path string true "Project name"
+// @Success 200 {object} models.Project
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/projects/{name} [get]
 func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if name == "" {

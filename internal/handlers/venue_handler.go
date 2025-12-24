@@ -18,6 +18,16 @@ func NewVenueHandler(repo repository.VenueRepository) *VenueHandler {
 	return &VenueHandler{repo: repo}
 }
 
+// @Tags Venues
+// @Summary Create venue
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param body body models.Venue true "Create venue request"
+// @Success 201 {object} models.Venue
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues [post]
 func (h *VenueHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var venue models.Venue
 	if err := json.NewDecoder(r.Body).Decode(&venue); err != nil {
@@ -41,6 +51,16 @@ func (h *VenueHandler) Create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(venue)
 }
 
+// @Tags Venues
+// @Summary Get venue
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "Venue ID"
+// @Success 200 {object} models.Venue
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/{id} [get]
 func (h *VenueHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	if idStr == "" {
@@ -69,6 +89,16 @@ func (h *VenueHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(venue)
 }
 
+// @Tags Venues
+// @Summary List venues
+// @Security BearerAuth
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues [get]
 func (h *VenueHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination, err := parsePaginationParams(r, 20, 100)
 	if err != nil {
@@ -91,6 +121,18 @@ func (h *VenueHandler) List(w http.ResponseWriter, r *http.Request) {
 	writePaginatedResponse(w, http.StatusOK, venues, pagination.page, pagination.pageSize, total)
 }
 
+// @Tags Venues
+// @Summary Update venue
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "Venue ID"
+// @Param body body models.Venue true "Update venue request"
+// @Success 200 {object} models.Venue
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/{id} [put]
 func (h *VenueHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	if idStr == "" {
@@ -131,6 +173,16 @@ func (h *VenueHandler) Update(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(venue)
 }
 
+// @Tags Venues
+// @Summary Delete venue
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "Venue ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/{id} [delete]
 func (h *VenueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	if idStr == "" {
@@ -158,6 +210,17 @@ func (h *VenueHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "Venue deleted successfully"})
 }
 
+// @Tags Venues
+// @Summary List venues by device
+// @Security BearerAuth
+// @Produce json
+// @Param deviceID path int true "Device ID"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/devices/{deviceID}/venues [get]
 func (h *VenueHandler) ListByDevice(w http.ResponseWriter, r *http.Request) {
 	deviceIDStr := chi.URLParam(r, "deviceID")
 	if deviceIDStr == "" {
@@ -194,6 +257,19 @@ func (h *VenueHandler) ListByDevice(w http.ResponseWriter, r *http.Request) {
 
 // Bulk operations for many-to-many relationships
 
+// @Tags Venues
+// @Summary Add devices to venue
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "Venue ID"
+// @Param body body object{device_ids=[]int} true "Add devices to venue request"
+// @Success 200 {object} map[string]interface{}
+// @Success 207 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/{id}/devices [post]
 func (h *VenueHandler) AddDevicesToVenue(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	if idStr == "" {
@@ -275,6 +351,19 @@ func (h *VenueHandler) AddDevicesToVenue(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(response)
 }
 
+// @Tags Venues
+// @Summary Remove devices from venue
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "Venue ID"
+// @Param body body object{device_ids=[]int} true "Remove devices from venue request"
+// @Success 200 {object} map[string]interface{}
+// @Success 207 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/{id}/devices [delete]
 func (h *VenueHandler) RemoveDevicesFromVenue(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	if idStr == "" {
@@ -356,6 +445,18 @@ func (h *VenueHandler) RemoveDevicesFromVenue(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(response)
 }
 
+// @Tags Venues
+// @Summary Get devices by venue
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "Venue ID"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/{id}/devices [get]
 func (h *VenueHandler) GetDevicesByVenue(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	if idStr == "" {

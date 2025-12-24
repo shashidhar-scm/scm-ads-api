@@ -34,6 +34,14 @@ type SyncCounts struct {
 	Devices  int `json:"devices"`
 }
 
+// @Tags Sync
+// @Summary Sync projects and devices from CityPost Console
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} SyncConsoleResponse
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/sync/console [post]
 // SyncConsole orchestrates fetching projects and devices from CityPost Console API and upserting them
 func (h *SyncHandler) SyncConsole(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

@@ -18,6 +18,20 @@ func NewDeviceReadHandler(repo repository.DeviceRepository) *DeviceReadHandler {
 	return &DeviceReadHandler{repo: repo}
 }
 
+// @Tags Devices
+// @Summary List devices
+// @Security BearerAuth
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Param project_id query int false "Filter by project ID"
+// @Param city query string false "Filter by city"
+// @Param region query string false "Filter by region"
+// @Param device_type query string false "Filter by device type"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/devices [get]
 func (h *DeviceReadHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination, err := parsePaginationParams(r, 20, 100)
 	if err != nil {
@@ -79,6 +93,16 @@ func (h *DeviceReadHandler) List(w http.ResponseWriter, r *http.Request) {
 	writePaginatedResponse(w, http.StatusOK, devices, pagination.page, pagination.pageSize, total)
 }
 
+// @Tags Devices
+// @Summary Get device
+// @Security BearerAuth
+// @Produce json
+// @Param hostName path string true "Device host name"
+// @Success 200 {object} models.Device
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/devices/{hostName} [get]
 func (h *DeviceReadHandler) Get(w http.ResponseWriter, r *http.Request) {
 	hostName := chi.URLParam(r, "hostName")
 	if hostName == "" {

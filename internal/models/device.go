@@ -17,7 +17,7 @@ type Device struct {
 	LastSyncedAt *time.Time             `json:"last_synced_at" db:"last_synced_at"`
 	SyncStatus   *string                `json:"sync_status" db:"sync_status"`
 	Project      int                    `json:"project" db:"project"` // foreign key to Project.id (console ID)
-	DeviceConfig json.RawMessage        `json:"device_config" db:"device_config"` // store as JSONB
+	DeviceConfig json.RawMessage        `json:"device_config" db:"device_config" swaggertype:"object"` // store as JSONB
 	RttyData     int64                  `json:"rtty_data" db:"rtty_data"`
 
 	// Local fields
