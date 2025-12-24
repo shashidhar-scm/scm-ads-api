@@ -420,54 +420,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/auth/signup": {
-            "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Account"
-                ],
-                "summary": "Signup",
-                "parameters": [
-                    {
-                        "description": "Signup request",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.SignupRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/campaigns/": {
             "get": {
                 "security": [
@@ -1467,44 +1419,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/sync/console": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Sync"
-                ],
-                "summary": "Sync projects and devices from CityPost Console",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.SyncConsoleResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/users/": {
             "get": {
                 "security": [
@@ -2293,31 +2207,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "handlers.SyncConsoleResponse": {
-            "type": "object",
-            "properties": {
-                "errors": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "synced": {
-                    "$ref": "#/definitions/handlers.SyncCounts"
-                }
-            }
-        },
-        "handlers.SyncCounts": {
-            "type": "object",
-            "properties": {
-                "devices": {
-                    "type": "integer"
-                },
-                "projects": {
-                    "type": "integer"
-                }
-            }
-        },
         "models.Advertiser": {
             "type": "object",
             "required": [
@@ -2873,34 +2762,6 @@ const docTemplate = `{
                     "minLength": 8
                 },
                 "token": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.SignupRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "name",
-                "password",
-                "phone_number",
-                "user_name"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string",
-                    "minLength": 8
-                },
-                "phone_number": {
-                    "type": "string"
-                },
-                "user_name": {
                     "type": "string"
                 }
             }

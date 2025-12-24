@@ -52,15 +52,6 @@ func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender)
 	}
 }
 
-// @Tags Account
-// @Summary Signup
-// @Accept json
-// @Produce json
-// @Param body body models.SignupRequest true "Signup request"
-// @Success 201 {object} map[string]interface{}
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /api/v1/auth/signup [post]
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req models.SignupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

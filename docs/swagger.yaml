@@ -1,21 +1,5 @@
 basePath: /
 definitions:
-  handlers.SyncConsoleResponse:
-    properties:
-      errors:
-        items:
-          type: string
-        type: array
-      synced:
-        $ref: '#/definitions/handlers.SyncCounts'
-    type: object
-  handlers.SyncCounts:
-    properties:
-      devices:
-        type: integer
-      projects:
-        type: integer
-    type: object
   models.Advertiser:
     properties:
       created_at:
@@ -394,26 +378,6 @@ definitions:
     - new_password
     - token
     type: object
-  models.SignupRequest:
-    properties:
-      email:
-        type: string
-      name:
-        type: string
-      password:
-        minLength: 8
-        type: string
-      phone_number:
-        type: string
-      user_name:
-        type: string
-    required:
-    - email
-    - name
-    - password
-    - phone_number
-    - user_name
-    type: object
   models.UpdateAdvertiserRequest:
     properties:
       email:
@@ -782,38 +746,6 @@ paths:
             additionalProperties: true
             type: object
       summary: Reset password
-      tags:
-      - Account
-  /api/v1/auth/signup:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Signup request
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/models.SignupRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Signup
       tags:
       - Account
   /api/v1/campaigns/:
@@ -1468,30 +1400,6 @@ paths:
       summary: Get project
       tags:
       - Projects
-  /api/v1/sync/console:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handlers.SyncConsoleResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Sync projects and devices from CityPost Console
-      tags:
-      - Sync
   /api/v1/users/:
     get:
       produces:
