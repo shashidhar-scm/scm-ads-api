@@ -22,10 +22,14 @@ func RegisterSwaggerRoutes(r chi.Router) {
 		}
 		
 		// Read the generated swagger.json file
-		swaggerFile, err := ioutil.ReadFile("docs/swagger.json")
+		swaggerFile, err := ioutil.ReadFile("app/docs/swagger.json")
 		if err != nil {
-			http.Error(w, "Swagger documentation not found", http.StatusNotFound)
-			return
+			// Try fallback to docs/swagger.json for local development
+			swaggerFile, err = ioutil.ReadFile("docs/swagger.json")
+			if err != nil {
+				http.Error(w, "Swagger documentation not found", http.StatusNotFound)
+				return
+			}
 		}
 		
 		// Parse the JSON
