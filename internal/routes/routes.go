@@ -167,6 +167,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 			RegisterSyncRoutes(r, db, client)
 			RegisterProjectRoutes(r, db)
 			RegisterDeviceReadRoutes(r, db)
+			RegisterVenueRoutes(r, db)
 
         })
     })
