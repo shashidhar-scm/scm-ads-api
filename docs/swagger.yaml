@@ -2009,6 +2009,7 @@ paths:
       - Venues
 securityDefinitions:
   BearerAuth:
+    description: 'Enter JWT token with ''Bearer '' prefix. Example: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
     in: header
     name: Authorization
     type: apiKey
