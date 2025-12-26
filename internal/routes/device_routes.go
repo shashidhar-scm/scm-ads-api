@@ -14,6 +14,7 @@ func RegisterDeviceReadRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewDeviceReadHandler(repo)
 
 	r.Route("/devices", func(r chi.Router) {
+		r.Get("/counts/regions", handler.CountByRegion)
 		r.Get("/", handler.List)
 		r.Get("/{hostName}", handler.Get)
 	})

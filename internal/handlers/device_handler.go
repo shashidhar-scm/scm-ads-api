@@ -19,6 +19,33 @@ func NewDeviceReadHandler(repo repository.DeviceRepository) *DeviceReadHandler {
 }
 
 // @Tags Devices
+// @Summary Region-wise device counts
+// @Security BearerAuth
+// @Produce json
+// @Param city query string false "Filter by city"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/devices/counts/regions [get]
+func (h *DeviceReadHandler) CountByRegion(w http.ResponseWriter, r *http.Request) {
+	var city *string
+	if v := r.URL.Query().Get("city"); v != "" {
+		city = &v
+	}
+
+	items, err := h.repo.CountByRegion(r.Context(), city)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count devices by region: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data": items,
+	})
+}
+
+// @Tags Devices
 // @Summary List devices
 // @Security BearerAuth
 // @Produce json

@@ -21,6 +21,8 @@ func NewProjectHandler(repo repository.ProjectRepository) *ProjectHandler {
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param page_size query int false "Page size" default(20)
+// @Param city query string false "Filter by city"
+// @Param region query string false "Filter by region"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -32,16 +34,38 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projects, err := h.repo.List(r.Context(), pagination.limit, pagination.offset)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list projects: "+err.Error())
-		return
+	filters := repository.ProjectFilters{}
+	if city := r.URL.Query().Get("city"); city != "" {
+		filters.City = &city
+	}
+	if region := r.URL.Query().Get("region"); region != "" {
+		filters.Region = &region
 	}
 
-	total, err := h.repo.Count(r.Context())
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count projects: "+err.Error())
-		return
+	var projects any
+	var total int
+	if filters.City != nil || filters.Region != nil {
+		projects, err = h.repo.ListWithFilters(r.Context(), filters, pagination.limit, pagination.offset)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list projects with filters: "+err.Error())
+			return
+		}
+		total, err = h.repo.CountWithFilters(r.Context(), filters)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count projects with filters: "+err.Error())
+			return
+		}
+	} else {
+		projects, err = h.repo.List(r.Context(), pagination.limit, pagination.offset)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list projects: "+err.Error())
+			return
+		}
+		total, err = h.repo.Count(r.Context())
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count projects: "+err.Error())
+			return
+		}
 	}
 
 	writePaginatedResponse(w, http.StatusOK, projects, pagination.page, pagination.pageSize, total)

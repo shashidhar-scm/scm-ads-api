@@ -15,6 +15,13 @@ type ProjectRepository interface {
 	GetByName(ctx context.Context, name string) (*models.Project, error)
 	List(ctx context.Context, limit int, offset int) ([]*models.Project, error)
 	Count(ctx context.Context) (int, error)
+	ListWithFilters(ctx context.Context, filters ProjectFilters, limit int, offset int) ([]*models.Project, error)
+	CountWithFilters(ctx context.Context, filters ProjectFilters) (int, error)
+}
+
+type ProjectFilters struct {
+	City   *string
+	Region *string
 }
 
 type projectRepository struct {
@@ -213,6 +220,117 @@ func (r *projectRepository) Count(ctx context.Context) (int, error) {
 	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM projects").Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count projects: %w", err)
+	}
+	return count, nil
+}
+
+func (r *projectRepository) ListWithFilters(ctx context.Context, filters ProjectFilters, limit int, offset int) ([]*models.Project, error) {
+	query := `
+		SELECT id, owner, languages, name, company, description, max_devices,
+			profile_img, header, sub_type, production, city_poster_frequency,
+			ad_poster_frequency, city_poster_play_time, loop_length,
+			smallbiz_support, proxy, address, latitude, longitude,
+			is_transit, scm_health, priority, replicas, region, status, role,
+			created_at, updated_at
+		FROM projects p
+		WHERE 1=1
+	`
+
+	var args []any
+	argIndex := 1
+
+	if filters.City != nil || filters.Region != nil {
+		query += " AND EXISTS (SELECT 1 FROM devices d WHERE d.project = p.id"
+		if filters.City != nil {
+			query += fmt.Sprintf(" AND d.device_config->>'city' = $%d", argIndex)
+			args = append(args, *filters.City)
+			argIndex++
+		}
+		if filters.Region != nil {
+			query += fmt.Sprintf(" AND d.region->>'code' = $%d", argIndex)
+			args = append(args, *filters.Region)
+			argIndex++
+		}
+		query += ")"
+	}
+
+	query += " ORDER BY p.created_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argIndex)
+		args = append(args, limit)
+		argIndex++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argIndex)
+		args = append(args, offset)
+		argIndex++
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list projects with filters: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []*models.Project
+	for rows.Next() {
+		var project models.Project
+		var ownerJSON, languagesJSON, regionJSON []byte
+		if err := rows.Scan(
+			&project.ID, &ownerJSON, &languagesJSON, &project.Name, &project.Company,
+			&project.Description, &project.MaxDevices, &project.ProfileImg,
+			&project.Header, &project.SubType, &project.Production,
+			&project.CityPosterFrequency, &project.AdPosterFrequency,
+			&project.CityPosterPlayTime, &project.LoopLength,
+			&project.SmallbizSupport, &project.Proxy, &project.Address,
+			&project.Latitude, &project.Longitude, &project.IsTransit,
+			&project.ScmHealth, &project.Priority, &project.Replicas,
+			&regionJSON, &project.Status, &project.Role,
+			&project.CreatedAt, &project.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan project: %w", err)
+		}
+
+		if err := json.Unmarshal(ownerJSON, &project.Owner); err != nil {
+			return nil, fmt.Errorf("unmarshal owner: %w", err)
+		}
+		if err := json.Unmarshal(languagesJSON, &project.Languages); err != nil {
+			return nil, fmt.Errorf("unmarshal languages: %w", err)
+		}
+		if err := json.Unmarshal(regionJSON, &project.Region); err != nil {
+			return nil, fmt.Errorf("unmarshal region: %w", err)
+		}
+
+		projects = append(projects, &project)
+	}
+
+	return projects, rows.Err()
+}
+
+func (r *projectRepository) CountWithFilters(ctx context.Context, filters ProjectFilters) (int, error) {
+	query := "SELECT COUNT(*) FROM projects p WHERE 1=1"
+	var args []any
+	argIndex := 1
+
+	if filters.City != nil || filters.Region != nil {
+		query += " AND EXISTS (SELECT 1 FROM devices d WHERE d.project = p.id"
+		if filters.City != nil {
+			query += fmt.Sprintf(" AND d.device_config->>'city' = $%d", argIndex)
+			args = append(args, *filters.City)
+			argIndex++
+		}
+		if filters.Region != nil {
+			query += fmt.Sprintf(" AND d.region->>'code' = $%d", argIndex)
+			args = append(args, *filters.Region)
+			argIndex++
+		}
+		query += ")"
+	}
+
+	var count int
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count projects with filters: %w", err)
 	}
 	return count, nil
 }

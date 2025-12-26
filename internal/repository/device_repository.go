@@ -19,6 +19,13 @@ type DeviceRepository interface {
 	CountByProject(ctx context.Context, projectID int) (int, error)
 	ListWithFilters(ctx context.Context, filters DeviceFilters, limit int, offset int) ([]*models.Device, error)
 	CountWithFilters(ctx context.Context, filters DeviceFilters) (int, error)
+	CountByRegion(ctx context.Context, city *string) ([]RegionDeviceCount, error)
+}
+
+type RegionDeviceCount struct {
+	Region string `json:"region"`
+	Count  int    `json:"count"`
+	City   *string `json:"city"`
 }
 
 type DeviceFilters struct {
@@ -258,9 +265,9 @@ func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFi
 	}
 
 	if filters.Region != nil {
-		// Search for region in the region JSONB field
-		query += fmt.Sprintf(" AND region::text LIKE $%d", argIndex)
-		args = append(args, "%"+*filters.Region+"%")
+		// Filter by region code in the region JSONB field
+		query += fmt.Sprintf(" AND region->>'code' = $%d", argIndex)
+		args = append(args, *filters.Region)
 		argIndex++
 	}
 
@@ -324,8 +331,8 @@ func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceF
 	}
 
 	if filters.Region != nil {
-		query += fmt.Sprintf(" AND region::text LIKE $%d", argIndex)
-		args = append(args, "%"+*filters.Region+"%")
+		query += fmt.Sprintf(" AND region->>'code' = $%d", argIndex)
+		args = append(args, *filters.Region)
 		argIndex++
 	}
 
@@ -341,4 +348,50 @@ func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceF
 		return 0, fmt.Errorf("count devices with filters: %w", err)
 	}
 	return count, nil
+}
+
+func (r *deviceRepository) CountByRegion(ctx context.Context, city *string) ([]RegionDeviceCount, error) {
+	query := `
+		SELECT
+			NULLIF(device_config->>'city', '') AS city,
+			COALESCE(region->>'code', '') AS region_code,
+			COUNT(*)::int AS device_count
+		FROM devices
+		WHERE 1=1
+	`
+
+	var args []any
+	argIndex := 1
+	if city != nil {
+		query += fmt.Sprintf(" AND device_config->>'city' = $%d", argIndex)
+		args = append(args, *city)
+		argIndex++
+	}
+
+	query += " GROUP BY 1, 2 ORDER BY device_count DESC"
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count devices by region: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RegionDeviceCount
+	for rows.Next() {
+		var row RegionDeviceCount
+		var cityNS sql.NullString
+		if err := rows.Scan(&cityNS, &row.Region, &row.Count); err != nil {
+			return nil, fmt.Errorf("scan region device count: %w", err)
+		}
+		if cityNS.Valid {
+			v := cityNS.String
+			row.City = &v
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows region device count: %w", err)
+	}
+
+	return out, nil
 }
