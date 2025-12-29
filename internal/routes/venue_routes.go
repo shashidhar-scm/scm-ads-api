@@ -13,6 +13,7 @@ func RegisterVenueRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewVenueHandler(repo)
 
 	r.Route("/venues", func(r chi.Router) {
+		r.Get("/search", handler.Search)
 		r.Get("/", handler.List)
 		r.Post("/", handler.Create)
 		r.Get("/{id}", handler.Get)

@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"scm/internal/models"
 )
 
@@ -27,6 +29,7 @@ type VenueRepository interface {
 	CountVenuesByDeviceID(ctx context.Context, deviceID int) (int, error)
 	GetDevicesByVenueID(ctx context.Context, venueID int, limit int, offset int) ([]*models.Device, error)
 	CountDevicesByVenueID(ctx context.Context, venueID int) (int, error)
+	Search(ctx context.Context, term string, limit int, offset int) ([]*models.Venue, int, error)
 }
 
 type venueRepository struct {
@@ -38,11 +41,11 @@ func NewVenueRepository(db *sql.DB) VenueRepository {
 }
 
 func (r *venueRepository) Create(ctx context.Context, venue *models.Venue) error {
-	query := `INSERT INTO venues (name, created_at, updated_at) 
-			  VALUES ($1, $2, $3) RETURNING id`
+	query := `INSERT INTO venues (name, sub_category, created_at, updated_at) 
+			  VALUES ($1, $2, $3, $4) RETURNING id`
 	
 	now := time.Now()
-	err := r.db.QueryRowContext(ctx, query, venue.Name, now, now).Scan(&venue.ID)
+	err := r.db.QueryRowContext(ctx, query, venue.Name, pq.Array(venue.SubCategory), now, now).Scan(&venue.ID)
 	if err != nil {
 		return fmt.Errorf("create venue: %w", err)
 	}
@@ -53,12 +56,13 @@ func (r *venueRepository) Create(ctx context.Context, venue *models.Venue) error
 }
 
 func (r *venueRepository) GetByID(ctx context.Context, id int) (*models.Venue, error) {
-	query := `SELECT id, name, created_at, updated_at 
+	query := `SELECT id, name, sub_category, created_at, updated_at 
 			  FROM venues WHERE id = $1`
 	
 	var venue models.Venue
+	var subCategory pq.StringArray
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&venue.ID, &venue.Name, &venue.CreatedAt, &venue.UpdatedAt,
+		&venue.ID, &venue.Name, &subCategory, &venue.CreatedAt, &venue.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -67,15 +71,17 @@ func (r *venueRepository) GetByID(ctx context.Context, id int) (*models.Venue, e
 		return nil, fmt.Errorf("get venue by id: %w", err)
 	}
 	
+	venue.SubCategory = []string(subCategory)
 	return &venue, nil
 }
 
 func (r *venueRepository) GetByIDWithDevices(ctx context.Context, id int) (*models.VenueWithDevices, error) {
 	// Get venue details
-	venueQuery := `SELECT id, name, created_at, updated_at FROM venues WHERE id = $1`
+	venueQuery := `SELECT id, name, sub_category, created_at, updated_at FROM venues WHERE id = $1`
 	var venue models.VenueWithDevices
+	var subCategory pq.StringArray
 	err := r.db.QueryRowContext(ctx, venueQuery, id).Scan(
-		&venue.ID, &venue.Name, &venue.CreatedAt, &venue.UpdatedAt,
+		&venue.ID, &venue.Name, &subCategory, &venue.CreatedAt, &venue.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -84,6 +90,8 @@ func (r *venueRepository) GetByIDWithDevices(ctx context.Context, id int) (*mode
 		return nil, fmt.Errorf("get venue by id: %w", err)
 	}
 	
+	venue.SubCategory = []string(subCategory)
+
 	// Get associated devices
 	devicesQuery := `SELECT d.id, d.device_type, d.region, d.name, d.host_name, d.description, d.change, d.last_synced_at, d.sync_status, d.project, d.device_config, d.rtty_data, d.created_at, d.updated_at
 					 FROM devices d 
@@ -125,12 +133,13 @@ func (r *venueRepository) GetByIDWithDevices(ctx context.Context, id int) (*mode
 }
 
 func (r *venueRepository) GetByName(ctx context.Context, name string) (*models.Venue, error) {
-	query := `SELECT id, name, created_at, updated_at 
+	query := `SELECT id, name, sub_category, created_at, updated_at 
 			  FROM venues WHERE name = $1`
 	
 	var venue models.Venue
+	var subCategory pq.StringArray
 	err := r.db.QueryRowContext(ctx, query, name).Scan(
-		&venue.ID, &venue.Name, &venue.CreatedAt, &venue.UpdatedAt,
+		&venue.ID, &venue.Name, &subCategory, &venue.CreatedAt, &venue.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -139,11 +148,12 @@ func (r *venueRepository) GetByName(ctx context.Context, name string) (*models.V
 		return nil, fmt.Errorf("get venue by name: %w", err)
 	}
 	
+	venue.SubCategory = []string(subCategory)
 	return &venue, nil
 }
 
 func (r *venueRepository) List(ctx context.Context, limit int, offset int) ([]*models.Venue, error) {
-	query := `SELECT id, name, created_at, updated_at 
+	query := `SELECT id, name, sub_category, created_at, updated_at 
 			  FROM venues ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 	
 	rows, err := r.db.QueryContext(ctx, query, limit, offset)
@@ -155,9 +165,11 @@ func (r *venueRepository) List(ctx context.Context, limit int, offset int) ([]*m
 	var venues []*models.Venue
 	for rows.Next() {
 		var venue models.Venue
-		if err := rows.Scan(&venue.ID, &venue.Name, &venue.CreatedAt, &venue.UpdatedAt); err != nil {
+		var subCategory pq.StringArray
+		if err := rows.Scan(&venue.ID, &venue.Name, &subCategory, &venue.CreatedAt, &venue.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan venue: %w", err)
 		}
+		venue.SubCategory = []string(subCategory)
 		venues = append(venues, &venue)
 	}
 	
@@ -174,11 +186,11 @@ func (r *venueRepository) Count(ctx context.Context) (int, error) {
 }
 
 func (r *venueRepository) Update(ctx context.Context, venue *models.Venue) error {
-	query := `UPDATE venues SET name = $1, updated_at = $2 
-			  WHERE id = $3`
+	query := `UPDATE venues SET name = $1, sub_category = $2, updated_at = $3 
+			  WHERE id = $4`
 	
 	now := time.Now()
-	result, err := r.db.ExecContext(ctx, query, venue.Name, now, venue.ID)
+	result, err := r.db.ExecContext(ctx, query, venue.Name, pq.Array(venue.SubCategory), now, venue.ID)
 	if err != nil {
 		return fmt.Errorf("update venue: %w", err)
 	}
@@ -293,7 +305,7 @@ func (r *venueRepository) RemoveDeviceFromVenue(ctx context.Context, venueID, de
 }
 
 func (r *venueRepository) GetVenuesByDeviceID(ctx context.Context, deviceID int, limit int, offset int) ([]*models.Venue, error) {
-	query := `SELECT v.id, v.name, v.created_at, v.updated_at 
+	query := `SELECT v.id, v.name, v.sub_category, v.created_at, v.updated_at 
 			  FROM venues v 
 			  JOIN venue_devices vd ON v.id = vd.venue_id 
 			  WHERE vd.device_id = $1 ORDER BY v.created_at DESC LIMIT $2 OFFSET $3`
@@ -370,4 +382,51 @@ func (r *venueRepository) CountDevicesByVenueID(ctx context.Context, venueID int
 		return 0, fmt.Errorf("count devices by venue: %w", err)
 	}
 	return count, nil
+}
+
+func (r *venueRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Venue, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM venues
+		WHERE LOWER(name) LIKE $1
+			OR LOWER(COALESCE(array_to_string(sub_category, ' '), '')) LIKE $1
+	`
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count search venues: %w", err)
+	}
+
+	query := `
+		SELECT id, name, sub_category, created_at, updated_at
+		FROM venues
+		WHERE LOWER(name) LIKE $1
+			OR LOWER(COALESCE(array_to_string(sub_category, ' '), '')) LIKE $1
+		ORDER BY updated_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search venues: %w", err)
+	}
+	defer rows.Close()
+
+	var venues []*models.Venue
+	for rows.Next() {
+		var venue models.Venue
+		var subCategory pq.StringArray
+		if err := rows.Scan(&venue.ID, &venue.Name, &subCategory, &venue.CreatedAt, &venue.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan venue: %w", err)
+		}
+		venue.SubCategory = []string(subCategory)
+		venues = append(venues, &venue)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("rows search venues: %w", err)
+	}
+
+	return venues, total, nil
 }

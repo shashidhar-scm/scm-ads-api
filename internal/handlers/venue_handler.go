@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"scm/internal/models"
@@ -12,6 +13,23 @@ import (
 
 type VenueHandler struct {
 	repo repository.VenueRepository
+}
+
+func uniqStrings(values []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, v := range values {
+		val := strings.TrimSpace(v)
+		if val == "" {
+			continue
+		}
+		if _, ok := seen[val]; ok {
+			continue
+		}
+		seen[val] = struct{}{}
+		out = append(out, val)
+	}
+	return out
 }
 
 func NewVenueHandler(repo repository.VenueRepository) *VenueHandler {
@@ -29,16 +47,25 @@ func NewVenueHandler(repo repository.VenueRepository) *VenueHandler {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/venues [post]
 func (h *VenueHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var venue models.Venue
-	if err := json.NewDecoder(r.Body).Decode(&venue); err != nil {
+	var req models.VenueRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_json", "Invalid JSON: "+err.Error())
 		return
 	}
 
 	// Validate required fields
-	if venue.Name == "" {
+	if strings.TrimSpace(req.Name) == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Venue name is required")
 		return
+	}
+	if len(req.SubCategory) == 0 {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "At least one sub_category is required")
+		return
+	}
+
+	venue := models.Venue{
+		Name:        strings.TrimSpace(req.Name),
+		SubCategory: uniqStrings(req.SubCategory),
 	}
 
 	if err := h.repo.Create(r.Context(), &venue); err != nil {
@@ -122,12 +149,45 @@ func (h *VenueHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Tags Venues
+// @Summary Search venues
+// @Security BearerAuth
+// @Produce json
+// @Param query query string true "Search text (matches name or sub_category)"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/venues/search [get]
+func (h *VenueHandler) Search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "query is required")
+		return
+	}
+
+	pagination, err := parsePaginationParams(r, 20, 100)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "Invalid pagination: "+err.Error())
+		return
+	}
+
+	venues, total, err := h.repo.Search(r.Context(), query, pagination.limit, pagination.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "Failed to search venues: "+err.Error())
+		return
+	}
+
+	writePaginatedResponse(w, http.StatusOK, venues, pagination.page, pagination.pageSize, total)
+}
+
+// @Tags Venues
 // @Summary Update venue
 // @Security BearerAuth
 // @Accept json
 // @Produce json
 // @Param id path int true "Venue ID"
-// @Param body body models.Venue true "Update venue request"
+// @Param body body models.VenueUpdateRequest true "Update venue request"
 // @Success 200 {object} models.Venue
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
@@ -146,19 +206,28 @@ func (h *VenueHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var venue models.Venue
-	if err := json.NewDecoder(r.Body).Decode(&venue); err != nil {
+	var req models.VenueUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_json", "Invalid JSON: "+err.Error())
 		return
 	}
 
 	// Validate required fields
-	if venue.Name == "" {
+	if strings.TrimSpace(req.Name) == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Venue name is required")
 		return
 	}
+	if len(req.SubCategory) == 0 {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "At least one sub_category is required")
+		return
+	}
 
-	venue.ID = id
+	venue := models.Venue{
+		ID:          id,
+		Name:        strings.TrimSpace(req.Name),
+		SubCategory: uniqStrings(req.SubCategory),
+	}
+
 	if err := h.repo.Update(r.Context(), &venue); err != nil {
 		if err.Error() == "venue not found" {
 			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "Venue not found")
