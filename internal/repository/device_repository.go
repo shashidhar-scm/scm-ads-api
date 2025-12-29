@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"scm/internal/models"
@@ -20,6 +22,7 @@ type DeviceRepository interface {
 	ListWithFilters(ctx context.Context, filters DeviceFilters, limit int, offset int) ([]*models.Device, error)
 	CountWithFilters(ctx context.Context, filters DeviceFilters) (int, error)
 	CountByRegion(ctx context.Context, city *string) ([]RegionDeviceCount, error)
+	Search(ctx context.Context, term string, limit int, offset int) ([]*models.Device, int, error)
 }
 
 type RegionDeviceCount struct {
@@ -29,10 +32,11 @@ type RegionDeviceCount struct {
 }
 
 type DeviceFilters struct {
-	ProjectID   *int
-	City        *string
-	Region      *string
-	DeviceType  *string
+	ProjectID  *int
+	City       *string
+	Region     *string
+	DeviceType *string
+	Test       *bool
 }
 
 type deviceRepository struct {
@@ -278,6 +282,12 @@ func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFi
 		argIndex++
 	}
 
+	if filters.Test != nil {
+		query += fmt.Sprintf(" AND device_config->>'test' = $%d", argIndex)
+		args = append(args, strconv.FormatBool(*filters.Test))
+		argIndex++
+	}
+
 	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
 	args = append(args, limit, offset)
 
@@ -342,6 +352,12 @@ func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceF
 		argIndex++
 	}
 
+	if filters.Test != nil {
+		query += fmt.Sprintf(" AND device_config->>'test' = $%d", argIndex)
+		args = append(args, strconv.FormatBool(*filters.Test))
+		argIndex++
+	}
+
 	var count int
 	err := r.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	if err != nil {
@@ -394,4 +410,65 @@ func (r *deviceRepository) CountByRegion(ctx context.Context, city *string) ([]R
 	}
 
 	return out, nil
+}
+
+func (r *deviceRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Device, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+	whereClause := `
+		LOWER(host_name) LIKE $1
+		OR LOWER(name) LIKE $1
+		OR LOWER(description) LIKE $1
+		OR LOWER(device_config->>'address') LIKE $1
+	`
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM devices WHERE %s", whereClause)
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count search devices: %w", err)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, device_type, region, name, host_name, description, change,
+			last_synced_at, sync_status, project, device_config, rtty_data,
+			created_at, updated_at
+		FROM devices
+		WHERE %s
+		ORDER BY updated_at DESC
+		LIMIT $2 OFFSET $3
+	`, whereClause)
+
+	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search devices: %w", err)
+	}
+	defer rows.Close()
+
+	var devices []*models.Device
+	for rows.Next() {
+		var device models.Device
+		var deviceTypeJSON, regionJSON []byte
+		if err := rows.Scan(
+			&device.ID, &deviceTypeJSON, &regionJSON, &device.Name, &device.HostName,
+			&device.Description, &device.Change, &device.LastSyncedAt, &device.SyncStatus,
+			&device.Project, &device.DeviceConfig, &device.RttyData,
+			&device.CreatedAt, &device.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan device: %w", err)
+		}
+
+		if err := json.Unmarshal(deviceTypeJSON, &device.DeviceType); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal device_type: %w", err)
+		}
+		if err := json.Unmarshal(regionJSON, &device.Region); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal region: %w", err)
+		}
+
+		devices = append(devices, &device)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("rows search devices: %w", err)
+	}
+
+	return devices, total, nil
 }

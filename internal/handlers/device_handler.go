@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"scm/internal/models"
@@ -16,6 +17,38 @@ type DeviceReadHandler struct {
 
 func NewDeviceReadHandler(repo repository.DeviceRepository) *DeviceReadHandler {
 	return &DeviceReadHandler{repo: repo}
+}
+
+// @Tags Devices
+// @Summary Search devices
+// @Security BearerAuth
+// @Produce json
+// @Param query query string true "Search text (matches host_name, name, description, address)"
+// @Param limit query int false "Maximum results to return" default(25)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/devices/search [get]
+func (h *DeviceReadHandler) Search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "query is required")
+		return
+	}
+
+	pagination, err := parsePaginationParams(r, 25, 100)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "invalid pagination: "+err.Error())
+		return
+	}
+
+	devices, total, err := h.repo.Search(r.Context(), query, pagination.limit, pagination.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to search devices: "+err.Error())
+		return
+	}
+
+	writePaginatedResponse(w, http.StatusOK, devices, pagination.page, pagination.pageSize, total)
 }
 
 // @Tags Devices
@@ -55,6 +88,7 @@ func (h *DeviceReadHandler) CountByRegion(w http.ResponseWriter, r *http.Request
 // @Param city query string false "Filter by city"
 // @Param region query string false "Filter by region"
 // @Param device_type query string false "Filter by device type"
+// @Param test query bool false "Filter by test flag (device_config.test)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -87,11 +121,20 @@ func (h *DeviceReadHandler) List(w http.ResponseWriter, r *http.Request) {
 		filters.DeviceType = &deviceType
 	}
 
+	if testParam := r.URL.Query().Get("test"); testParam != "" {
+		value, err := strconv.ParseBool(testParam)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_test_filter", "test must be true or false")
+			return
+		}
+		filters.Test = &value
+	}
+
 	var devices []*models.Device
 	var total int
 
 	// Use filters if any are provided, otherwise use basic list
-	if filters.ProjectID != nil || filters.City != nil || filters.Region != nil || filters.DeviceType != nil {
+	if filters.ProjectID != nil || filters.City != nil || filters.Region != nil || filters.DeviceType != nil || filters.Test != nil {
 		devices, err = h.repo.ListWithFilters(r.Context(), filters, pagination.limit, pagination.offset)
 		if err != nil {
 			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to list devices with filters: "+err.Error())
