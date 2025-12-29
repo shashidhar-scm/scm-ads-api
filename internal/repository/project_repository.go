@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"scm/internal/models"
@@ -17,6 +18,7 @@ type ProjectRepository interface {
 	Count(ctx context.Context) (int, error)
 	ListWithFilters(ctx context.Context, filters ProjectFilters, limit int, offset int) ([]*models.Project, error)
 	CountWithFilters(ctx context.Context, filters ProjectFilters) (int, error)
+	Search(ctx context.Context, term string, limit int, offset int) ([]*models.Project, int, error)
 }
 
 type ProjectFilters struct {
@@ -333,4 +335,76 @@ func (r *projectRepository) CountWithFilters(ctx context.Context, filters Projec
 		return 0, fmt.Errorf("count projects with filters: %w", err)
 	}
 	return count, nil
+}
+
+func (r *projectRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Project, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
+	countQuery := `
+		SELECT COUNT(*) FROM projects
+		WHERE LOWER(name) LIKE $1
+		   OR LOWER(COALESCE(description, '')) LIKE $1
+	`
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count search projects: %w", err)
+	}
+
+	query := `
+		SELECT id, owner, languages, name, company, description, max_devices,
+			profile_img, header, sub_type, production, city_poster_frequency,
+			ad_poster_frequency, city_poster_play_time, loop_length,
+			smallbiz_support, proxy, address, latitude, longitude,
+			is_transit, scm_health, priority, replicas, region, status, role,
+			created_at, updated_at
+		FROM projects
+		WHERE LOWER(name) LIKE $1
+		   OR LOWER(COALESCE(description, '')) LIKE $1
+		ORDER BY updated_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+		if err != nil {
+		return nil, 0, fmt.Errorf("search projects: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []*models.Project
+	for rows.Next() {
+		var project models.Project
+		var ownerJSON, languagesJSON, regionJSON []byte
+		if err := rows.Scan(
+			&project.ID, &ownerJSON, &languagesJSON, &project.Name, &project.Company,
+			&project.Description, &project.MaxDevices, &project.ProfileImg,
+			&project.Header, &project.SubType, &project.Production,
+			&project.CityPosterFrequency, &project.AdPosterFrequency,
+			&project.CityPosterPlayTime, &project.LoopLength,
+			&project.SmallbizSupport, &project.Proxy, &project.Address,
+			&project.Latitude, &project.Longitude, &project.IsTransit,
+			&project.ScmHealth, &project.Priority, &project.Replicas,
+			&regionJSON, &project.Status, &project.Role,
+			&project.CreatedAt, &project.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan project: %w", err)
+		}
+
+		if err := json.Unmarshal(ownerJSON, &project.Owner); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal owner: %w", err)
+		}
+		if err := json.Unmarshal(languagesJSON, &project.Languages); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal languages: %w", err)
+		}
+		if err := json.Unmarshal(regionJSON, &project.Region); err != nil {
+			return nil, 0, fmt.Errorf("unmarshal region: %w", err)
+		}
+
+		projects = append(projects, &project)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("rows search projects: %w", err)
+	}
+
+	return projects, total, nil
 }

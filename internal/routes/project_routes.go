@@ -14,6 +14,7 @@ func RegisterProjectRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewProjectHandler(repo)
 
 	r.Route("/projects", func(r chi.Router) {
+		r.Get("/search", handler.Search)
 		r.Get("/", handler.List)
 		r.Get("/{name}", handler.Get)
 	})

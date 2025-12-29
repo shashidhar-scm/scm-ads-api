@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"scm/internal/repository"
@@ -16,11 +17,45 @@ func NewProjectHandler(repo repository.ProjectRepository) *ProjectHandler {
 }
 
 // @Tags Projects
+// @Summary Search projects
+// @Security BearerAuth
+// @Produce json
+// @Param query query string true "Search text (matches name, description)"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/projects/search [get]
+func (h *ProjectHandler) Search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "query is required")
+		return
+	}
+
+	pagination, err := parsePaginationParams(r, 20, 100)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "invalid pagination: "+err.Error())
+		return
+	}
+
+	projects, total, err := h.repo.Search(r.Context(), query, pagination.limit, pagination.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to search projects: "+err.Error())
+		return
+	}
+
+	writePaginatedResponse(w, http.StatusOK, projects, pagination.page, pagination.pageSize, total)
+}
+
+// @Tags Projects
 // @Summary List projects
 // @Security BearerAuth
 // @Produce json
 // @Param page query int false "Page number" default(1)
 // @Param page_size query int false "Page size" default(20)
+// @Param query query string false "Search text (matches name, description)"
 // @Param city query string false "Filter by city"
 // @Param region query string false "Filter by region"
 // @Success 200 {object} map[string]interface{}
@@ -31,6 +66,16 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination, err := parsePaginationParams(r, 20, 100)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "invalid pagination: "+err.Error())
+		return
+	}
+
+	if query := strings.TrimSpace(r.URL.Query().Get("query")); query != "" {
+		projects, total, err := h.repo.Search(r.Context(), query, pagination.limit, pagination.offset)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to search projects: "+err.Error())
+			return
+		}
+		writePaginatedResponse(w, http.StatusOK, projects, pagination.page, pagination.pageSize, total)
 		return
 	}
 
