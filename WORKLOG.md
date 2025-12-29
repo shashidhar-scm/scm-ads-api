@@ -147,8 +147,21 @@
 - **Added**: Query parameter filtering for devices list endpoint:
   - `?project_id=123` - Filter by project ID (exact match)
   - `?city=NewYork` - Filter by city from `device_config.city` (exact match)
-  - `?region=East` - Filter by region (partial text search in region JSONB)
+  - `?region=East` - Filter by region code (exact match against `region.code`)
   - `?device_type=LCD` - Filter by device type (partial text search in device_type JSONB)
+
+### Device Counts by Region
+- **Added**: `GET /api/v1/devices/counts/regions`
+  - **Purpose**: Return total device counts grouped by `city` + `region` in a single response.
+  - **Optional filter**: `?city=kcmo`
+  - **Response shape**: `{"data": [{"city":"kcmo","region":"kc","count":123}, ...]}`
+
+### Project Filtering Enhancement
+- **Added**: Query parameter filtering for projects list endpoint:
+  - `GET /api/v1/projects?city=kcmo` - Projects having at least one device in the given city
+  - `GET /api/v1/projects?region=kc` - Projects having at least one device in the given region code
+  - `GET /api/v1/projects?city=kcmo&region=kc` - Combined filter
+- **Implementation**: Uses `EXISTS (SELECT 1 FROM devices d WHERE d.project = p.id AND ...)` since `projects` table does not store a dedicated `city` field.
 
 ### Authentication Fix
 - **Fixed**: CityPost console authentication now uses proper auth scheme from config
@@ -169,9 +182,12 @@
 - `GET /api/v1/projects` - List all projects (with pagination)
 - `GET /api/v1/projects/{name}` - Get specific project by name
 - `GET /api/v1/devices` - List devices with optional filtering (project_id, city, region, device_type)
+- `GET /api/v1/devices/counts/regions` - Region-wise device counts (grouped by city + region)
 - `GET /api/v1/devices/{hostName}` - Get specific device by hostName
 
 ### Next Steps
 - Test device filtering with various query parameters
+- Validate `/api/v1/devices/counts/regions` output for both filtered and unfiltered requests
+- Validate `/api/v1/projects` filtering semantics match expected behavior
 - Verify sync functionality with proper authentication
 - Consider adding more specific JSONB field queries if needed
