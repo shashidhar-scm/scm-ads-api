@@ -23,7 +23,7 @@ func NewVenueHandler(repo repository.VenueRepository) *VenueHandler {
 // @Security BearerAuth
 // @Accept json
 // @Produce json
-// @Param body body models.Venue true "Create venue request"
+// @Param body body models.VenueRequest true "Create venue request"
 // @Success 201 {object} models.Venue
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}

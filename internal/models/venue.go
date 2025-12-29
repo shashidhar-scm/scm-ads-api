@@ -9,6 +9,10 @@ type Venue struct {
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
+type VenueRequest struct {
+	Name string `json:"name"`
+}
+
 // VenueWithDevices includes the associated devices information
 type VenueWithDevices struct {
 	ID      int      `json:"id" db:"id"`
