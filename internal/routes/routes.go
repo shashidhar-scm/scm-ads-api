@@ -21,7 +21,7 @@ import (
 
 func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi.Mux {
 	r := chi.NewRouter()
-	
+
 	// Middleware
 	allowedOrigins := []string{"*"}
 	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
@@ -52,6 +52,11 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
+	rateLimiter := authmw.NewRateLimiter(cfg.RateLimitMax, time.Duration(cfg.RateLimitWindowSeconds)*time.Second)
+	if rateLimiter != nil {
+		r.Use(rateLimiter.Middleware)
+	}
+
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -79,6 +84,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
             DB:     dbStatus{Status: "ok"},
         }
 
+        w.Header().Set("Content-Type", "application/json")
         if err := db.PingContext(ctx); err != nil {
             resp.Status = "degraded"
             resp.DB.Status = "down"
@@ -87,8 +93,6 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
         } else {
             w.WriteHeader(http.StatusOK)
         }
-
-        w.Header().Set("Content-Type", "application/json")
         _ = json.NewEncoder(w).Encode(resp)
     })
     

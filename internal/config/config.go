@@ -15,6 +15,8 @@ type Config struct {
 	AuthVerboseErrors bool
 	AuthReturnResetToken bool
 	AuthResetPasswordURL string
+	RateLimitWindowSeconds int
+	RateLimitMax           int
 
 	CityPostConsoleBaseURL   string
 	CityPostConsoleUsername  string
@@ -59,6 +61,8 @@ func Load() *Config {
 		DatabaseURL: databaseURL,
 		AuthVerboseErrors: getEnvBool("AUTH_VERBOSE_ERRORS", false),
 		AuthReturnResetToken: getEnvBool("AUTH_RETURN_RESET_TOKEN", false),
+		RateLimitWindowSeconds: getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60),
+		RateLimitMax:           getEnvInt("RATE_LIMIT_MAX", 120),
 
 		JWTSecret:           getEnv("JWT_SECRET", "dev-secret"),
 		JWTExpiresInSeconds: getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
@@ -91,6 +95,18 @@ func getEnvInt64(key string, defaultValue int64) int64 {
 		return defaultValue
 	}
 	i, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return i
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	value := strings.TrimSpace(getEnv(key, ""))
+	if value == "" {
+		return defaultValue
+	}
+	i, err := strconv.Atoi(value)
 	if err != nil {
 		return defaultValue
 	}

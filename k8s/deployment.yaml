@@ -21,6 +21,8 @@ data:
   CITYPOST_CONSOLE_USERNAME: "girish@smartcitymedia.us"
   CITYPOST_CONSOLE_PASSWORD: "liv3wire"
   CITYPOST_CONSOLE_AUTH_SCHEME: "Token"
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+  RATE_LIMIT_MAX: "120"
   VERSION: "0.0.18"
 kind: ConfigMap
 metadata:
