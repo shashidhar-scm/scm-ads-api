@@ -214,7 +214,7 @@ func (r *campaignRepository) CompleteActiveEndedBefore(ctx context.Context, now 
 }
 
 func (r *campaignRepository) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) {
-    query := `
+	query := `
         SELECT COUNT(*)
         FROM campaigns
         WHERE 1=1
@@ -256,7 +256,83 @@ func (r *campaignRepository) Count(ctx context.Context, filter interfaces.Campai
     if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
         return 0, err
     }
-    return total, nil
+	return total, nil
+}
+
+func (r *campaignRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Campaign, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
+	countQuery := `
+        SELECT COUNT(*)
+        FROM campaigns
+        WHERE LOWER(name) LIKE $1
+           OR LOWER(COALESCE(array_to_string(cities, ' '), '')) LIKE $1
+           OR LOWER(to_char(start_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(to_char(end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(CAST(budget AS TEXT)) LIKE $1
+           OR LOWER(CAST(spent AS TEXT)) LIKE $1
+           OR LOWER(CAST(impressions AS TEXT)) LIKE $1
+           OR LOWER(CAST(clicks AS TEXT)) LIKE $1
+    `
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("search campaigns count: %w", err)
+	}
+
+	query := `
+        SELECT 
+            id, name, status, cities, start_date, end_date, budget,
+            spent, impressions, clicks, ctr, advertiser_id,
+            created_at, updated_at
+        FROM campaigns
+        WHERE LOWER(name) LIKE $1
+           OR LOWER(COALESCE(array_to_string(cities, ' '), '')) LIKE $1
+           OR LOWER(to_char(start_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(to_char(end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(CAST(budget AS TEXT)) LIKE $1
+           OR LOWER(CAST(spent AS TEXT)) LIKE $1
+           OR LOWER(CAST(impressions AS TEXT)) LIKE $1
+           OR LOWER(CAST(clicks AS TEXT)) LIKE $1
+        ORDER BY updated_at DESC
+        LIMIT $2 OFFSET $3
+    `
+
+	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search campaigns: %w", err)
+	}
+	defer rows.Close()
+
+	var campaigns []*models.Campaign
+	for rows.Next() {
+		var campaign models.Campaign
+		if err := rows.Scan(
+			&campaign.ID,
+			&campaign.Name,
+			&campaign.Status,
+			pq.Array(&campaign.Cities),
+			&campaign.StartDate,
+			&campaign.EndDate,
+			&campaign.Budget,
+			&campaign.Spent,
+			&campaign.Impressions,
+			&campaign.Clicks,
+			&campaign.CTR,
+			&campaign.AdvertiserID,
+			&campaign.CreatedAt,
+			&campaign.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan campaign: %w", err)
+		}
+		campaigns = append(campaigns, &campaign)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate campaigns: %w", err)
+	}
+
+	return campaigns, total, nil
 }
 
 // List retrieves a list of campaigns based on the provided filter

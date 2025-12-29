@@ -18,6 +18,7 @@ func RegisterAdvertiserRoutes(router chi.Router, db *sql.DB) {
 
 	// Define routes
 	router.Route("/advertisers", func(r chi.Router) {
+		r.Get("/search", advertiserHandler.SearchAdvertisers)
 		r.Get("/", advertiserHandler.ListAdvertisers)
 		r.Post("/", advertiserHandler.CreateAdvertiser)
 		r.Route("/{id}", func(r chi.Router) {

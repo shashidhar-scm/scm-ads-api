@@ -264,6 +264,43 @@ func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http
 }
 
 // @Tags Creatives
+// @Summary Search creatives
+// @Security BearerAuth
+// @Produce json
+// @Param query query string true "Search text (matches name, type, selected days, time slots, devices)"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/creatives/search [get]
+func (h *CreativeHandler) SearchCreatives(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "query is required")
+		return
+	}
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	creatives, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_creatives_failed", "Failed to search creatives")
+		return
+	}
+
+	if creatives == nil {
+		creatives = []*models.Creative{}
+	}
+
+	writePaginatedResponse(w, http.StatusOK, creatives, p.page, p.pageSize, total)
+}
+
+// @Tags Creatives
 // @Summary List creatives
 // @Security BearerAuth
 // @Produce json

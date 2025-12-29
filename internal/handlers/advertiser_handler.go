@@ -1,16 +1,18 @@
 package handlers
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-    "encoding/json"
-    "log"
-    "net/http"
-    "database/sql"
-    "github.com/go-chi/chi/v5"
-    "github.com/go-playground/validator/v10"
-    "scm/internal/interfaces"
-    "scm/internal/models"
+	"log"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+	"scm/internal/interfaces"
+	"scm/internal/models"
 )
 
 type AdvertiserHandler struct {
@@ -124,6 +126,43 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 
 	if advertisers == nil {
 		advertisers = []models.Advertiser{} // Return empty array instead of null
+	}
+
+	writePaginatedResponse(w, http.StatusOK, advertisers, p.page, p.pageSize, total)
+}
+
+// @Tags Advertisers
+// @Summary Search advertisers
+// @Security BearerAuth
+// @Produce json
+// @Param query query string true "Search text (matches name or email)"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/advertisers/search [get]
+func (h *AdvertiserHandler) SearchAdvertisers(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "query is required")
+		return
+	}
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	advertisers, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_advertisers_failed", "Failed to search advertisers")
+		return
+	}
+
+	if advertisers == nil {
+		advertisers = []models.Advertiser{}
 	}
 
 	writePaginatedResponse(w, http.StatusOK, advertisers, p.page, p.pageSize, total)

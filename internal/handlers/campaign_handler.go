@@ -8,6 +8,7 @@ import (
     "fmt"
     "log"
     "net/http"
+    "strings"
     "time"
 
     "github.com/go-chi/chi/v5"
@@ -173,6 +174,43 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 		"campaigns":             campaigns,
 	}
 	writePaginatedResponse(w, http.StatusOK, data, p.page, p.pageSize, total)
+}
+
+// @Tags Campaigns
+// @Summary Search campaigns
+// @Security BearerAuth
+// @Produce json
+// @Param query query string true "Search text (matches name, cities, start/end dates, budget, spent, impressions, clicks)"
+// @Param page query int false "Page number" default(1)
+// @Param page_size query int false "Page size" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/search [get]
+func (h *CampaignHandler) SearchCampaigns(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "query is required")
+		return
+	}
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	campaigns, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_campaigns_failed", "Failed to search campaigns")
+		return
+	}
+
+	if campaigns == nil {
+		campaigns = []*models.Campaign{}
+	}
+
+	writePaginatedResponse(w, http.StatusOK, campaigns, p.page, p.pageSize, total)
 }
 
 // @Tags Campaigns

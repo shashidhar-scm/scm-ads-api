@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
+
 	"github.com/lib/pq"
 	"scm/internal/models"
 )
@@ -14,6 +16,7 @@ type CreativeRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Creative, error)
 	ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error)
 	CountAll(ctx context.Context) (int, error)
+	Search(ctx context.Context, term string, limit int, offset int) ([]*models.Creative, int, error)
 	ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error)
 	CountByCampaign(ctx context.Context, campaignID string) (int, error)
 	ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error)
@@ -146,6 +149,70 @@ func (r *creativeRepository) CountAll(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return total, nil
+}
+
+func (r *creativeRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Creative, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM creatives
+		WHERE LOWER(name) LIKE $1
+			OR LOWER(type::text) LIKE $1
+			OR LOWER(COALESCE(array_to_string(selected_days, ' '), '')) LIKE $1
+			OR LOWER(COALESCE(array_to_string(time_slots, ' '), '')) LIKE $1
+			OR LOWER(COALESCE(array_to_string(devices, ' '), '')) LIKE $1
+	`
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("search creatives count: %w", err)
+	}
+
+	query := `
+		SELECT
+			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+		FROM creatives
+		WHERE LOWER(name) LIKE $1
+			OR LOWER(type::text) LIKE $1
+			OR LOWER(COALESCE(array_to_string(selected_days, ' '), '')) LIKE $1
+			OR LOWER(COALESCE(array_to_string(time_slots, ' '), '')) LIKE $1
+			OR LOWER(COALESCE(array_to_string(devices, ' '), '')) LIKE $1
+		ORDER BY uploaded_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search creatives: %w", err)
+	}
+	defer rows.Close()
+
+	var creatives []*models.Creative
+	for rows.Next() {
+		var creative models.Creative
+		if err := rows.Scan(
+			&creative.ID,
+			&creative.Name,
+			&creative.Type,
+			&creative.URL,
+			&creative.FilePath,
+			&creative.Size,
+			&creative.CampaignID,
+			pq.Array(&creative.SelectedDays),
+			pq.Array(&creative.TimeSlots),
+			pq.Array(&creative.Devices),
+			&creative.UploadedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan creative: %w", err)
+		}
+		creatives = append(creatives, &creative)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate creatives: %w", err)
+	}
+
+	return creatives, total, nil
 }
 
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {

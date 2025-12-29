@@ -17,6 +17,7 @@ func RegisterCampaignRoutes(router chi.Router, db *sql.DB) {
     campaignHandler := handlers.NewCampaignHandler(campaignRepo)
 
     router.Route("/campaigns", func(r chi.Router) {
+        r.Get("/search", campaignHandler.SearchCampaigns)
         r.Get("/", campaignHandler.ListCampaigns)
         r.Get("/advertiser/{advertiserID}", campaignHandler.ListCampaignsByAdvertiser)
         r.Post("/", func(w http.ResponseWriter, r *http.Request) {

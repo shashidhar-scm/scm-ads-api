@@ -24,6 +24,7 @@ func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Co
     creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config)
 
     router.Route("/creatives", func(r chi.Router) {
+        r.Get("/search", creativeHandler.SearchCreatives)
         r.Get("/", creativeHandler.ListCreatives)
         r.Post("/upload", creativeHandler.UploadCreative)
         r.Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)

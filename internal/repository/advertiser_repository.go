@@ -155,6 +155,73 @@ func (r *advertiserRepository) Count(ctx context.Context) (int, error) {
 	return total, nil
 }
 
+func (r *advertiserRepository) Search(ctx context.Context, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM advertisers
+		WHERE LOWER(name) LIKE $1
+			OR LOWER(email) LIKE $1
+	`
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count advertisers: %w", err)
+	}
+
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE LOWER(name) LIKE $1
+			OR LOWER(email) LIKE $1
+		ORDER BY name
+	`
+
+	args := []any{likeTerm}
+	argPos := 2
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search advertisers: %w", err)
+	}
+	defer rows.Close()
+
+	var advertisers []models.Advertiser
+	for rows.Next() {
+		var adv models.Advertiser
+		var createdBy sql.NullString
+		if err := rows.Scan(
+			&adv.ID,
+			&adv.Name,
+			&adv.Email,
+			&createdBy,
+			&adv.CreatedAt,
+			&adv.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan advertiser: %w", err)
+		}
+		if createdBy.Valid {
+			adv.CreatedBy = createdBy.String
+		}
+		advertisers = append(advertisers, adv)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating advertisers: %w", err)
+	}
+
+	return advertisers, total, nil
+}
+
 func (r *advertiserRepository) Update(ctx context.Context, id string, req *models.UpdateAdvertiserRequest) error {
 	setValues := []string{}
 	args := []interface{}{}
