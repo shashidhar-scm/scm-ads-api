@@ -19,12 +19,12 @@ import (
 type mockCampaignRepo struct{}
 
 type mockPopAPI struct {
-	byCampaignID map[string]int64
+	byCampaignID map[string]*services.CampaignImpressions
 }
 
-func (m *mockPopAPI) CampaignImpressions(ctx context.Context, campaignID string) (int64, error) {
+func (m *mockPopAPI) CampaignImpressions(ctx context.Context, campaignID string) (*services.CampaignImpressions, error) {
 	if m == nil {
-		return 0, nil
+		return nil, nil
 	}
 	return m.byCampaignID[campaignID], nil
 }
@@ -59,7 +59,9 @@ func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
 }
 
 func TestListCampaignsIncludesLifetimeImpressionsWhenRequested(t *testing.T) {
-	pop := &mockPopAPI{byCampaignID: map[string]int64{"c1": 123}}
+	pop := &mockPopAPI{byCampaignID: map[string]*services.CampaignImpressions{
+		"c1": {CampaignID: "c1", Impressions: 123},
+	}}
 	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop)
 	r := chi.NewRouter()
 	r.Get("/campaigns", h.ListCampaigns)
@@ -100,7 +102,9 @@ func TestListCampaignsIncludesLifetimeImpressionsWhenRequested(t *testing.T) {
 }
 
 func TestListCampaignsDoesNotIncludeLifetimeImpressionsByDefault(t *testing.T) {
-	pop := &mockPopAPI{byCampaignID: map[string]int64{"c1": 123}}
+	pop := &mockPopAPI{byCampaignID: map[string]*services.CampaignImpressions{
+		"c1": {CampaignID: "c1", Impressions: 123},
+	}}
 	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop)
 	r := chi.NewRouter()
 	r.Get("/campaigns", h.ListCampaigns)

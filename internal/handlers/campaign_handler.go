@@ -92,7 +92,8 @@ func (h *CampaignHandler) GetCampaignImpressions(w http.ResponseWriter, r *http.
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"data": map[string]any{
 			"campaign_id": campaignID,
-			"impressions": impressions,
+			"impressions": impressions.Impressions,
+			"posters":     impressions.Posters,
 		},
 	})
 }
@@ -240,7 +241,9 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 				writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_request_failed", "Failed to fetch impressions")
 				return
 			}
-			c.LifetimeImpressions = &imps
+			if imps != nil {
+				c.LifetimeImpressions = &imps.Impressions
+			}
 		}
 	}
 

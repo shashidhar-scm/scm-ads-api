@@ -12,7 +12,7 @@ import (
 )
 
 type PopAPI interface {
-	CampaignImpressions(ctx context.Context, campaignID string) (int64, error)
+	CampaignImpressions(ctx context.Context, campaignID string) (*CampaignImpressions, error)
 }
 
 type PopClient struct {
@@ -20,9 +20,17 @@ type PopClient struct {
 	httpClient *http.Client
 }
 
-type popImpressionsResponse struct {
-	CampaignID  string `json:"campaign_id"`
+type PosterImpression struct {
+	PosterID    string `json:"poster_id"`
+	PosterName  string `json:"poster_name"`
 	Impressions int64  `json:"impressions"`
+	PlayTime    int64  `json:"play_time"`
+}
+
+type CampaignImpressions struct {
+	CampaignID  string             `json:"campaign_id"`
+	Impressions int64              `json:"impressions"`
+	Posters     []PosterImpression `json:"posters"`
 }
 
 func NewPopClient(baseURL string) *PopClient {
@@ -38,17 +46,17 @@ func (c *PopClient) SetHTTPClient(hc *http.Client) {
 	}
 }
 
-func (c *PopClient) CampaignImpressions(ctx context.Context, campaignID string) (int64, error) {
+func (c *PopClient) CampaignImpressions(ctx context.Context, campaignID string) (*CampaignImpressions, error) {
 	if strings.TrimSpace(c.baseURL) == "" {
-		return 0, fmt.Errorf("pop baseURL is required")
+		return nil, fmt.Errorf("pop baseURL is required")
 	}
 	if strings.TrimSpace(campaignID) == "" {
-		return 0, fmt.Errorf("campaignID is required")
+		return nil, fmt.Errorf("campaignID is required")
 	}
 
 	u, err := url.Parse(c.baseURL + "/pop/impressions")
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	q := u.Query()
 	q.Set("campaign_id", campaignID)
@@ -56,24 +64,24 @@ func (c *PopClient) CampaignImpressions(ctx context.Context, campaignID string) 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("pop impressions request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("pop impressions request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var out popImpressionsResponse
+	var out CampaignImpressions
 	if err := json.Unmarshal(body, &out); err != nil {
-		return 0, fmt.Errorf("pop impressions: invalid json: %w", err)
+		return nil, fmt.Errorf("pop impressions: invalid json: %w", err)
 	}
-	return out.Impressions, nil
+	return &out, nil
 }

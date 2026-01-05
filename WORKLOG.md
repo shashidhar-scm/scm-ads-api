@@ -185,6 +185,12 @@
 - `GET /api/v1/devices/counts/regions` - Region-wise device counts (grouped by city + region)
 - `GET /api/v1/devices/{hostName}` - Get specific device by hostName
 
+## 2026-01-05
+- Automated campaign lifecycle notifications: `cmd/api/main.go` now instantiates a shared SMTP sender (`services.NewSMTPSender`) and `CampaignNotifier`, wiring it into the existing scheduler jobs. `startScheduledCampaignCompleter` triggers completion emails immediately after marking campaigns completed, and a new `startCampaignNotificationDispatcher` sends activation/reminder emails daily based on `CAMPAIGN_NOTIFICATION_TIME`.
+- `internal/services/campaign_notifier.go` gained logic to send activation, reminder (next-day), and completion emails by querying `ListByStartDate`/`ListByEndDate`. `CampaignRepository` implements `ListByEndDate` to support completion checks.
+- Removed the manual `/api/v1/campaigns/notifications/send` route; campaign notifications are now fully automated.
+- POP impressions integration: `internal/services/pop_client.go` consumes the richer `/pop/impressions` response (campaign total plus poster-level breakdown with `impressions` + `play_time`). `CampaignHandler` exposes this data in `GET /api/v1/campaigns/{id}/impressions`, and list endpoints populate `lifetime_impressions` when requested. Tests updated accordingly.
+
 ### Next Steps
 - Test device filtering with various query parameters
 - Validate `/api/v1/devices/counts/regions` output for both filtered and unfiltered requests
