@@ -22,6 +22,7 @@ type Config struct {
 	CityPostConsoleUsername  string
 	CityPostConsolePassword  string
 	CityPostConsoleAuthScheme string
+	PopAPIBaseURL            string
 
 	JWTSecret           string
 	JWTExpiresInSeconds int64
@@ -72,6 +73,7 @@ func Load() *Config {
 		CityPostConsoleUsername:   getEnv("CITYPOST_CONSOLE_USERNAME", "girish@smartcitymedia.us"),
 		CityPostConsolePassword:   getEnv("CITYPOST_CONSOLE_PASSWORD", "liv3wire"),
 		CityPostConsoleAuthScheme: getEnv("CITYPOST_CONSOLE_AUTH_SCHEME", "Token"),
+		PopAPIBaseURL:             getEnv("POP_API_BASE_URL", "https://pop-api.citypost.us"),
 
 		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
 		SMTPPort:     getEnv("SMTP_PORT", "587"),

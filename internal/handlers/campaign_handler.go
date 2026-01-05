@@ -17,6 +17,7 @@ import (
     "github.com/lib/pq"
     "scm/internal/interfaces"
     "scm/internal/models"
+	"scm/internal/services"
 )
 
 func writeJSONErrorCampaign(w http.ResponseWriter, status int, code string, message string) {
@@ -29,8 +30,9 @@ func writeJSONErrorCampaign(w http.ResponseWriter, status int, code string, mess
 }
 
 type CampaignHandler struct {
-    repo      interfaces.CampaignRepository
-    validator *validator.Validate
+    repo        interfaces.CampaignRepository
+    validator   *validator.Validate
+	popAPI      services.PopAPI
 }
 
 func NewCampaignHandler(repo interfaces.CampaignRepository) *CampaignHandler {
@@ -38,6 +40,61 @@ func NewCampaignHandler(repo interfaces.CampaignRepository) *CampaignHandler {
         repo:      repo,
         validator: validator.New(),
     }
+}
+
+func NewCampaignHandlerWithPop(repo interfaces.CampaignRepository, popAPI services.PopAPI) *CampaignHandler {
+	return &CampaignHandler{
+		repo:      repo,
+		validator: validator.New(),
+		popAPI:    popAPI,
+	}
+}
+
+// @Tags Campaigns
+// @Summary Campaign lifetime impressions
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Campaign ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/campaigns/{id}/impressions [get]
+func (h *CampaignHandler) GetCampaignImpressions(w http.ResponseWriter, r *http.Request) {
+	campaignID := chi.URLParam(r, "id")
+	if campaignID == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
+		return
+	}
+
+	if _, err := h.repo.GetByID(r.Context(), campaignID); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
+		return
+	}
+
+	if h.popAPI == nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_not_configured", "POP API client is not configured")
+		return
+	}
+
+	impressions, err := h.popAPI.CampaignImpressions(r.Context(), campaignID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_request_failed", "Failed to fetch impressions")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data": map[string]any{
+			"campaign_id": campaignID,
+			"impressions": impressions,
+		},
+	})
 }
 
 // @Tags Campaigns
@@ -143,6 +200,12 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	includeImpressions := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_impressions")), "true")
+	if includeImpressions && h.popAPI == nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_not_configured", "POP API client is not configured")
+		return
+	}
+
 	filter := interfaces.CampaignFilter{Limit: p.limit, Offset: p.offset}
 
 	total, err := h.repo.Count(r.Context(), filter)
@@ -166,6 +229,20 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
     if campaigns == nil {
         campaigns = []*models.Campaign{} // Return empty array instead of null
     }
+
+	if includeImpressions {
+		for _, c := range campaigns {
+			if c == nil || strings.TrimSpace(c.ID) == "" {
+				continue
+			}
+			imps, err := h.popAPI.CampaignImpressions(r.Context(), c.ID)
+			if err != nil {
+				writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_request_failed", "Failed to fetch impressions")
+				return
+			}
+			c.LifetimeImpressions = &imps
+		}
+	}
 
 	data := map[string]any{
 		"active_campaign_count": summary.ActiveCampaignCount,

@@ -17,6 +17,17 @@ type SMTPSender struct {
 	UseTLS bool
 }
 
+func NewSMTPSender(host, port, user, pass, from string, useTLS bool) *SMTPSender {
+	return &SMTPSender{
+		Host:   host,
+		Port:   port,
+		User:   user,
+		Pass:   pass,
+		From:   from,
+		UseTLS: useTLS,
+	}
+}
+
 func (s *SMTPSender) Send(to string, subject string, body string) error {
 	addr := net.JoinHostPort(s.Host, s.Port)
 

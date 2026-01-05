@@ -23,6 +23,7 @@ type Campaign struct {
     Budget       float64       `json:"budget" validate:"required,gt=0"`
     Spent        float64       `json:"spent"`
     Impressions  int           `json:"impressions"`
+    LifetimeImpressions *int64  `json:"lifetime_impressions,omitempty"`
     Clicks       int           `json:"clicks"`
     CTR          float64       `json:"ctr"`
     AdvertiserID string        `json:"advertiser_id" validate:"required,uuid4"`

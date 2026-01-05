@@ -21,8 +21,8 @@ type DeviceRepository interface {
 	CountByProject(ctx context.Context, projectID int) (int, error)
 	ListWithFilters(ctx context.Context, filters DeviceFilters, limit int, offset int) ([]*models.Device, error)
 	CountWithFilters(ctx context.Context, filters DeviceFilters) (int, error)
-	CountByRegion(ctx context.Context, city *string) ([]RegionDeviceCount, error)
-	Search(ctx context.Context, term string, limit int, offset int) ([]*models.Device, int, error)
+	CountByRegion(ctx context.Context, city *string, test *bool) ([]RegionDeviceCount, error)
+	Search(ctx context.Context, term string, city *string, region *string, limit int, offset int) ([]*models.Device, int, error)
 }
 
 type RegionDeviceCount struct {
@@ -366,7 +366,7 @@ func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceF
 	return count, nil
 }
 
-func (r *deviceRepository) CountByRegion(ctx context.Context, city *string) ([]RegionDeviceCount, error) {
+func (r *deviceRepository) CountByRegion(ctx context.Context, city *string, test *bool) ([]RegionDeviceCount, error) {
 	query := `
 		SELECT
 			NULLIF(device_config->>'city', '') AS city,
@@ -381,6 +381,11 @@ func (r *deviceRepository) CountByRegion(ctx context.Context, city *string) ([]R
 	if city != nil {
 		query += fmt.Sprintf(" AND device_config->>'city' = $%d", argIndex)
 		args = append(args, *city)
+		argIndex++
+	}
+	if test != nil {
+		query += fmt.Sprintf(" AND device_config->>'test' = $%d", argIndex)
+		args = append(args, strconv.FormatBool(*test))
 		argIndex++
 	}
 
@@ -412,18 +417,36 @@ func (r *deviceRepository) CountByRegion(ctx context.Context, city *string) ([]R
 	return out, nil
 }
 
-func (r *deviceRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Device, int, error) {
+
+func (r *deviceRepository) Search(ctx context.Context, term string, city *string, region *string, limit int, offset int) ([]*models.Device, int, error) {
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
 	whereClause := `
-		LOWER(host_name) LIKE $1
-		OR LOWER(name) LIKE $1
-		OR LOWER(description) LIKE $1
-		OR LOWER(device_config->>'address') LIKE $1
+		(
+			LOWER(host_name) LIKE $1
+			OR LOWER(name) LIKE $1
+			OR LOWER(description) LIKE $1
+			OR LOWER(device_config->>'address') LIKE $1
+		)
 	`
+
+	args := []any{likeTerm}
+	argIndex := 2
+
+	if city != nil {
+		whereClause += fmt.Sprintf(" AND device_config->>'city' = $%d", argIndex)
+		args = append(args, *city)
+		argIndex++
+	}
+	if region != nil {
+		whereClause += fmt.Sprintf(" AND region->>'code' = $%d", argIndex)
+		args = append(args, *region)
+		argIndex++
+	}
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM devices WHERE %s", whereClause)
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count search devices: %w", err)
 	}
 
@@ -434,10 +457,12 @@ func (r *deviceRepository) Search(ctx context.Context, term string, limit int, o
 		FROM devices
 		WHERE %s
 		ORDER BY updated_at DESC
-		LIMIT $2 OFFSET $3
-	`, whereClause)
+		LIMIT $%d OFFSET $%d
+	`, whereClause, argIndex, argIndex+1)
 
-	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("search devices: %w", err)
 	}

@@ -263,13 +263,22 @@ func (h *DeviceReadHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var city *string
+	if v := strings.TrimSpace(r.URL.Query().Get("city")); v != "" {
+		city = &v
+	}
+	var region *string
+	if v := strings.TrimSpace(r.URL.Query().Get("region")); v != "" {
+		region = &v
+	}
+
 	pagination, err := parsePaginationParams(r, 25, 100)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_pagination", "invalid pagination: "+err.Error())
 		return
 	}
 
-	devices, total, err := h.repo.Search(r.Context(), query, pagination.limit, pagination.offset)
+	devices, total, err := h.repo.Search(r.Context(), query, city, region, pagination.limit, pagination.offset)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to search devices: "+err.Error())
 		return
@@ -292,7 +301,17 @@ func (h *DeviceReadHandler) CountByRegion(w http.ResponseWriter, r *http.Request
 		city = &v
 	}
 
-	items, err := h.repo.CountByRegion(r.Context(), city)
+	var test *bool
+	if v := strings.TrimSpace(r.URL.Query().Get("test")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "invalid test: "+err.Error())
+			return
+		}
+		test = &b
+	}
+
+	items, err := h.repo.CountByRegion(r.Context(), city, test)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to count devices by region: "+err.Error())
 		return

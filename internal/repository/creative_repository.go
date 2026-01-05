@@ -279,13 +279,15 @@ func (r *creativeRepository) CountByCampaign(ctx context.Context, campaignID str
 func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
-		FROM creatives
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+		FROM creatives cr
+		JOIN campaigns ca ON ca.id = cr.campaign_id
 		WHERE EXISTS (
 			SELECT 1
-			FROM unnest(devices) dv
+			FROM unnest(cr.devices) dv
 			WHERE lower(trim(dv)) = lower($1)
 		)
+		AND ca.status = 'active'
 	`
 
 	args := []any{device}
@@ -298,12 +300,12 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		query += `
 			AND EXISTS (
 				SELECT 1
-				FROM unnest(selected_days) d
+				FROM unnest(cr.selected_days) d
 				WHERE lower(trim(d)) = lower($2)
 			)
 			AND EXISTS (
 				SELECT 1
-				FROM unnest(time_slots) ts
+				FROM unnest(cr.time_slots) ts
 				WHERE (
 					position('-' in ts) > 0
 					AND $3::time >= split_part(ts, '-', 1)::time
@@ -367,12 +369,14 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 func (r *creativeRepository) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {
 	query := `
 		SELECT COUNT(*)
-		FROM creatives
+		FROM creatives cr
+		JOIN campaigns ca ON ca.id = cr.campaign_id
 		WHERE EXISTS (
 			SELECT 1
-			FROM unnest(devices) dv
+			FROM unnest(cr.devices) dv
 			WHERE lower(trim(dv)) = lower($1)
 		)
+		AND ca.status = 'active'
 	`
 
 	args := []any{device}
@@ -383,12 +387,12 @@ func (r *creativeRepository) CountByDevice(ctx context.Context, device string, a
 		query += `
 			AND EXISTS (
 				SELECT 1
-				FROM unnest(selected_days) d
+				FROM unnest(cr.selected_days) d
 				WHERE lower(trim(d)) = lower($2)
 			)
 			AND EXISTS (
 				SELECT 1
-				FROM unnest(time_slots) ts
+				FROM unnest(cr.time_slots) ts
 				WHERE (
 					position('-' in ts) > 0
 					AND $3::time >= split_part(ts, '-', 1)::time

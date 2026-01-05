@@ -426,6 +426,50 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
     return campaigns, rows.Err()
 }
 
+func (r *campaignRepository) ListByEndDate(ctx context.Context, endDate time.Time) ([]*models.Campaign, error) {
+    query := `
+        SELECT 
+            id, name, status, cities, start_date, end_date, budget,
+            spent, impressions, clicks, ctr, advertiser_id,
+            created_at, updated_at
+        FROM campaigns
+        WHERE DATE(end_date) = DATE($1)
+    `
+
+    rows, err := r.db.QueryContext(ctx, query, endDate)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var campaigns []*models.Campaign
+    for rows.Next() {
+        var campaign models.Campaign
+        err := rows.Scan(
+            &campaign.ID,
+            &campaign.Name,
+            &campaign.Status,
+            pq.Array(&campaign.Cities),
+            &campaign.StartDate,
+            &campaign.EndDate,
+            &campaign.Budget,
+            &campaign.Spent,
+            &campaign.Impressions,
+            &campaign.Clicks,
+            &campaign.CTR,
+            &campaign.AdvertiserID,
+            &campaign.CreatedAt,
+            &campaign.UpdatedAt,
+        )
+        if err != nil {
+            return nil, err
+        }
+        campaigns = append(campaigns, &campaign)
+    }
+
+    return campaigns, rows.Err()
+}
+
 // Update updates a campaign with the given ID
 func (r *campaignRepository) Update(ctx context.Context, id string, campaign *models.Campaign) error {
     cities := campaign.Cities
@@ -508,4 +552,48 @@ func (r *campaignRepository) Delete(ctx context.Context, id string) error {
     }
 
     return nil
+}
+
+func (r *campaignRepository) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
+    query := `
+        SELECT 
+            id, name, status, cities, start_date, end_date, budget,
+            spent, impressions, clicks, ctr, advertiser_id,
+            created_at, updated_at
+        FROM campaigns
+        WHERE DATE(start_date) = DATE($1)
+    `
+
+    rows, err := r.db.QueryContext(ctx, query, startDate)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var campaigns []*models.Campaign
+    for rows.Next() {
+        var campaign models.Campaign
+        err := rows.Scan(
+            &campaign.ID,
+            &campaign.Name,
+            &campaign.Status,
+            pq.Array(&campaign.Cities),
+            &campaign.StartDate,
+            &campaign.EndDate,
+            &campaign.Budget,
+            &campaign.Spent,
+            &campaign.Impressions,
+            &campaign.Clicks,
+            &campaign.CTR,
+            &campaign.AdvertiserID,
+            &campaign.CreatedAt,
+            &campaign.UpdatedAt,
+        )
+        if err != nil {
+            return nil, err
+        }
+        campaigns = append(campaigns, &campaign)
+    }
+
+    return campaigns, rows.Err()
 }

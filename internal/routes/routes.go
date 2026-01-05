@@ -157,7 +157,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 			r.Use(authmw.JWTAuth(cfg.JWTSecret))
 
             // Register campaign routes
-            RegisterCampaignRoutes(r, db)  // Correct order: router first, then db
+			RegisterCampaignRoutes(r, db, cfg.PopAPIBaseURL)
             // Register advertiser routes
             RegisterAdvertiserRoutes(r, db)
             RegisterCreativeRoutes(r, db, s3Config)

@@ -29,4 +29,6 @@ type CampaignRepository interface {
     CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)
     Update(ctx context.Context, id string, campaign *models.Campaign) error
     Delete(ctx context.Context, id string) error
+    ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error)
+    ListByEndDate(ctx context.Context, endDate time.Time) ([]*models.Campaign, error)
 }

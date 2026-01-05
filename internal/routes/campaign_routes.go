@@ -5,16 +5,18 @@ import (
     "database/sql"
     "github.com/go-chi/chi/v5"
     "scm/internal/handlers"
+    "scm/internal/services"
     "scm/internal/repository"
     "log"
 	"net/http"
 )
 
-func RegisterCampaignRoutes(router chi.Router, db *sql.DB) {
+func RegisterCampaignRoutes(router chi.Router, db *sql.DB, popBaseURL string) {
     log.Println("Registering campaign routes...")
 
     campaignRepo := repository.NewCampaignRepository(db)
-    campaignHandler := handlers.NewCampaignHandler(campaignRepo)
+    popClient := services.NewPopClient(popBaseURL)
+    campaignHandler := handlers.NewCampaignHandlerWithPop(campaignRepo, popClient)
 
     router.Route("/campaigns", func(r chi.Router) {
         r.Get("/search", campaignHandler.SearchCampaigns)
@@ -27,8 +29,10 @@ func RegisterCampaignRoutes(router chi.Router, db *sql.DB) {
         
         r.Route("/{id}", func(r chi.Router) {
             r.Get("/", campaignHandler.GetCampaign)
+			r.Get("/impressions", campaignHandler.GetCampaignImpressions)
             r.Put("/", campaignHandler.UpdateCampaign)
             r.Delete("/", campaignHandler.DeleteCampaign)
         })
+
     })
 }

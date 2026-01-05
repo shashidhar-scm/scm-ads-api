@@ -379,7 +379,27 @@ func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.R
 		creatives = []*models.Creative{}
 	}
 
-	writePaginatedResponse(w, http.StatusOK, creatives, p.page, p.pageSize, total)
+	type creativesByCampaign struct {
+		CampaignID string             `json:"campaign_id"`
+		Creatives  []*models.Creative `json:"creatives"`
+	}
+
+	groups := make([]creativesByCampaign, 0)
+	indexByCampaignID := make(map[string]int)
+	for _, c := range creatives {
+		if c == nil {
+			continue
+		}
+		idx, ok := indexByCampaignID[c.CampaignID]
+		if !ok {
+			idx = len(groups)
+			indexByCampaignID[c.CampaignID] = idx
+			groups = append(groups, creativesByCampaign{CampaignID: c.CampaignID, Creatives: []*models.Creative{}})
+		}
+		groups[idx].Creatives = append(groups[idx].Creatives, c)
+	}
+
+	writePaginatedResponse(w, http.StatusOK, groups, p.page, p.pageSize, total)
 }
 
 // GetCreative handles GET /creatives/{id}

@@ -27,6 +27,7 @@ import (
     "scm/internal/db/migrations"
     "scm/internal/repository"
     "scm/internal/routes"
+    "scm/internal/services"
 )
 
 func getEnv(key, defaultValue string) string {
@@ -40,7 +41,7 @@ func getEnv(key, defaultValue string) string {
 
 func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface {
 	CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)
-}) {
+}, notifier *services.CampaignNotifier) {
 	tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
 	activeStatus := getEnv("CAMPAIGN_ACTIVE_STATUS", "active")
 	completedStatus := getEnv("CAMPAIGN_COMPLETED_STATUS", "completed")
@@ -69,7 +70,8 @@ func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface
 			}
 
 			runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			rows, err := campaignRepo.CompleteActiveEndedBefore(runCtx, time.Now(), activeStatus, completedStatus, tzName)
+			now = time.Now()
+			rows, err := campaignRepo.CompleteActiveEndedBefore(runCtx, now, activeStatus, completedStatus, tzName)
 			cancel()
 			if err != nil {
 				log.Printf("Failed to complete ended campaigns (active=%s completed=%s tz=%s): %v", activeStatus, completedStatus, tzName, err)
@@ -77,6 +79,11 @@ func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface
 			}
 			if rows > 0 {
 				log.Printf("Completed %d campaign(s) (active=%s completed=%s tz=%s)", rows, activeStatus, completedStatus, tzName)
+				if notifier != nil {
+					if err := notifier.SendCompletionNotifications(ctx, now); err != nil {
+						log.Printf("Failed to send completion notifications: %v", err)
+					}
+				}
 			}
 		}
 	}()
@@ -108,6 +115,41 @@ func nextRunAt(now time.Time, loc *time.Location, hour int, minute int) time.Tim
         run = run.Add(24 * time.Hour)
     }
     return run
+}
+
+func startCampaignNotificationDispatcher(ctx context.Context, notifier *services.CampaignNotifier) {
+    tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
+    hhmm := getEnv("CAMPAIGN_NOTIFICATION_TIME", "00:03")
+    hour, minute := parseHHMM(hhmm, 0, 3)
+
+    loc, err := time.LoadLocation(tzName)
+    if err != nil {
+        log.Printf("Invalid CAMPAIGN_SCHEDULER_TZ=%q, falling back to UTC: %v", tzName, err)
+        tzName = "UTC"
+        loc = time.UTC
+    }
+
+    go func() {
+        for {
+            now := time.Now()
+            runAt := nextRunAt(now, loc, hour, minute)
+            delay := time.Until(runAt)
+
+            t := time.NewTimer(delay)
+            select {
+            case <-ctx.Done():
+                t.Stop()
+                return
+            case <-t.C:
+            }
+
+            runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+            if err := notifier.SendActivationNotifications(runCtx); err != nil {
+                log.Printf("Failed to send campaign notifications (tz=%s): %v", tzName, err)
+            }
+            cancel()
+        }
+    }()
 }
 
 func startScheduledCampaignActivator(ctx context.Context, campaignRepo interface {
@@ -178,8 +220,19 @@ func main() {
     jobsCtx, cancelJobs := context.WithCancel(context.Background())
     defer cancelJobs()
     campaignRepo := repository.NewCampaignRepository(database.DB)
+    userRepo := repository.NewUserRepository(database.DB)
+    emailSender := services.NewSMTPSender(
+        cfg.SMTPHost,
+        cfg.SMTPPort,
+        cfg.SMTPUser,
+        cfg.SMTPPassword,
+        cfg.SMTPFrom,
+        cfg.SMTPUseTLS,
+    )
+    notifier := services.NewCampaignNotifier(campaignRepo, userRepo, emailSender)
     startScheduledCampaignActivator(jobsCtx, campaignRepo)
-	startScheduledCampaignCompleter(jobsCtx, campaignRepo)
+	startScheduledCampaignCompleter(jobsCtx, campaignRepo, notifier)
+    startCampaignNotificationDispatcher(jobsCtx, notifier)
 
 	// Initialize S3 configuration
     s3Config, err := config.NewS3Config()
