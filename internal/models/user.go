@@ -14,9 +14,9 @@ type User struct {
 
 type SignupRequest struct {
 	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"required,min=8"`
+	Password    string `json:"password" validate:"required,strongpassword"`
 	Name        string `json:"name" validate:"required"`
-	UserName    string `json:"user_name" validate:"required"`
+	UserName    string `json:"user_name" validate:"required,alphanum"`
 	PhoneNumber string `json:"phone_number" validate:"required"`
 }
 
@@ -32,6 +32,7 @@ type LoginResponse struct {
 	Name        string `json:"name,omitempty"`
 	UserName    string `json:"user_name,omitempty"`
 	PhoneNumber string `json:"phone_number,omitempty"`
+	ID          string `json:"id"`
 }
 
 type ForgotPasswordRequest struct {
@@ -40,7 +41,7 @@ type ForgotPasswordRequest struct {
 
 type ResetPasswordRequest struct {
 	Token       string `json:"token" validate:"required"`
-	NewPassword string `json:"new_password" validate:"required,min=8"`
+	NewPassword string `json:"new_password" validate:"required,strongpassword"`
 }
 
 type UpdateUserRequest struct {
@@ -51,6 +52,6 @@ type UpdateUserRequest struct {
 }
 
 type ChangePasswordRequest struct {
-	OldPassword string `json:"old_password"`
-	NewPassword string `json:"new_password"`
+	OldPassword string `json:"old_password" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,strongpassword"`
 }

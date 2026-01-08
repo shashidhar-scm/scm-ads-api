@@ -78,6 +78,9 @@ scm-ads-api/
 - `JWT_EXPIRES_IN_SECONDS` (default: `86400`)
 - `AUTH_VERBOSE_ERRORS` (default: `false`)
 - `AUTH_RETURN_RESET_TOKEN` (default: `false`)
+- `DASHBOARD_BASE_URL` (default: `https://scm-ads.citypost.us`) (used in signup welcome email)
+
+Password policy (signup/reset/change): minimum 8 characters with at least 1 uppercase, 1 lowercase, 1 number, and 1 special character.
 
 ### SMTP (Forgot/Reset password)
 

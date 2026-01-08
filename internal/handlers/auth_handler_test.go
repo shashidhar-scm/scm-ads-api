@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,6 +20,13 @@ import (
 )
 
 type noopMailer struct{}
+
+type recordingMailer struct {
+	to      string
+	subject string
+	body    string
+	calls   int
+}
 
 func TestForgotPasswordReturnsTokenWhenEnabled(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -63,6 +71,78 @@ func TestForgotPasswordReturnsTokenWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestSignupWeakPasswordReturnsJSON(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
+	payload := map[string]any{
+		"email":        "a@b.com",
+		"password":     "password123",
+		"name":         "A",
+		"user_name":    "a",
+		"phone_number": "9999999999",
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	h.Signup(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] == nil {
+		t.Fatalf("expected json error, got %v", resp)
+	}
+	msg, _ := resp["message"].(string)
+	if !strings.Contains(msg, "password must be at least 8") {
+		t.Fatalf("expected password policy message, got %v", resp)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestSignupInvalidUserNameReturnsJSON(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
+	payload := map[string]any{
+		"email":        "a@b.com",
+		"password":     "Password1!",
+		"name":         "A",
+		"user_name":    "a b",
+		"phone_number": "9999999999",
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	h.Signup(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] == nil {
+		t.Fatalf("expected json error, got %v", resp)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
 func TestResetPasswordSuccess(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -83,7 +163,7 @@ func TestResetPasswordSuccess(t *testing.T) {
 	mock.ExpectExec("UPDATE password_reset_tokens SET used_at").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
-	payload := map[string]any{"token": rawToken, "new_password": "newpassword123"}
+	payload := map[string]any{"token": rawToken, "new_password": "Newpass1!"}
 	b, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/reset-password", bytes.NewReader(b))
 	w := httptest.NewRecorder()
@@ -107,6 +187,14 @@ func TestResetPasswordSuccess(t *testing.T) {
 
 func (n *noopMailer) Send(to string, subject string, body string) error { return nil }
 
+func (m *recordingMailer) Send(to string, subject string, body string) error {
+	m.to = to
+	m.subject = subject
+	m.body = body
+	m.calls++
+	return nil
+}
+
 func TestSignupSuccess(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -118,11 +206,12 @@ func TestSignupSuccess(t *testing.T) {
 		sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now().UTC()),
 	)
 
-	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
+	m := &recordingMailer{}
+	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev", DashboardBaseURL: "https://dashboard.example"}, services.EmailSender(m))
 
 	payload := map[string]any{
 		"email": "a@b.com",
-		"password": "password123",
+		"password": "Password1!",
 		"name": "A",
 		"user_name": "a",
 		"phone_number": "9999999999",
@@ -137,6 +226,21 @@ func TestSignupSuccess(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("expected application/json, got %q", ct)
+	}
+	if m.calls != 1 {
+		t.Fatalf("expected welcome email to be sent once, got %d", m.calls)
+	}
+	if m.to != "a@b.com" {
+		t.Fatalf("expected email to a@b.com, got %q", m.to)
+	}
+	if !strings.Contains(m.subject, "Welcome") {
+		t.Fatalf("expected welcome subject, got %q", m.subject)
+	}
+	if !strings.Contains(m.body, "https://dashboard.example") {
+		t.Fatalf("expected dashboard URL in email body, got %q", m.body)
+	}
+	if !strings.Contains(m.body, "Username") {
+		t.Fatalf("expected username in email body, got %q", m.body)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -156,7 +260,7 @@ func TestSignupDuplicateEmailReturnsJSON(t *testing.T) {
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
 	payload := map[string]any{
 		"email": "a@b.com",
-		"password": "password123",
+		"password": "Password1!",
 		"name": "A",
 		"user_name": "a",
 		"phone_number": "9999999999",
@@ -187,7 +291,7 @@ func TestLoginSuccess(t *testing.T) {
 	}
 	defer db.Close()
 
-	hash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte("Password1!"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
 	}
@@ -198,7 +302,7 @@ func TestLoginSuccess(t *testing.T) {
 	)
 
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
-	payload := map[string]any{"identifier": "a@b.com", "password": "password123"}
+	payload := map[string]any{"identifier": "a@b.com", "password": "Password1!"}
 	b, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(b))
 	w := httptest.NewRecorder()

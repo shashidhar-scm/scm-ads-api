@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
@@ -34,6 +35,22 @@ func writeJSONError(w http.ResponseWriter, status int, code string, message stri
 	})
 }
 
+func validationMessage(err error) string {
+	var verrs validator.ValidationErrors
+	if !errors.As(err, &verrs) {
+		return err.Error()
+	}
+	for _, fe := range verrs {
+		switch fe.Tag() {
+		case "strongpassword":
+			return "password must be at least 8 characters and contain at least 1 uppercase, 1 lowercase, 1 number, and 1 special character"
+		case "alphanum":
+			return "user_name must contain only letters and numbers"
+		}
+	}
+	return err.Error()
+}
+
 type AuthHandler struct {
 	users  repository.UserRepository
 	resets repository.PasswordResetRepository
@@ -43,13 +60,42 @@ type AuthHandler struct {
 }
 
 func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender) *AuthHandler {
+	v := validator.New()
+	_ = v.RegisterValidation("strongpassword", strongPassword)
 	return &AuthHandler{
 		users:  repository.NewUserRepository(db),
 		resets: repository.NewPasswordResetRepository(db),
 		mailer: mailer,
 		cfg:    cfg,
-		v:      validator.New(),
+		v:      v,
 	}
+}
+
+func strongPassword(fl validator.FieldLevel) bool {
+	s, ok := fl.Field().Interface().(string)
+	if !ok {
+		return false
+	}
+	if len(s) < 8 {
+		return false
+	}
+	hasUpper := false
+	hasLower := false
+	hasNumber := false
+	hasSpecial := false
+	for _, r := range s {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasNumber = true
+		default:
+			hasSpecial = true
+		}
+	}
+	return hasUpper && hasLower && hasNumber && hasSpecial
 }
 
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +105,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "validation_error", err.Error())
+		writeJSONError(w, http.StatusBadRequest, "validation_error", validationMessage(err))
 		return
 	}
 
@@ -114,6 +160,22 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	subject := "Welcome to SCM Ads"
+	dashboardURL := strings.TrimSpace(h.cfg.DashboardBaseURL)
+	body := "<html><body style=\"font-family:Arial,sans-serif; color:#111;\">" +
+		"<h2 style=\"margin:0 0 12px 0;\">Welcome, " + req.Name + "</h2>" +
+		"<p style=\"margin:0 0 16px 0;\">Your account has been created successfully.</p>" +
+		"<p style=\"margin:0 0 16px 0;\">You can log in using your <b>username</b>, <b>email</b>, or <b>phone number</b>.</p>" +
+		"<p style=\"margin:0 0 8px 0;\">Your username:</p>" +
+		"<p style=\"margin:0 0 16px 0;\"><b>Username:</b> " + req.UserName + "</p>"
+	if dashboardURL != "" {
+		body += "<p style=\"margin:0 0 20px 0;\">Dashboard: <a href=\"" + dashboardURL + "\">" + dashboardURL + "</a></p>"
+	}
+	body += "</body></html>"
+	if err := h.mailer.Send(u.Email, subject, body); err != nil {
+		log.Printf("signup: failed to send welcome email to %s: %v", u.Email, err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{"id": u.ID, "email": u.Email, "created_at": u.CreatedAt})
@@ -136,7 +198,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "validation_error", err.Error())
+		writeJSONError(w, http.StatusBadRequest, "validation_error", validationMessage(err))
 		return
 	}
 
@@ -182,6 +244,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(models.LoginResponse{
 		AccessToken: signed,
 		ExpiresIn:   expiresIn,
+		ID:          u.ID,
 		Email:       u.Email,
 		Name:        u.Name,
 		UserName:    u.UserName,
@@ -204,7 +267,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "validation_error", err.Error())
+		writeJSONError(w, http.StatusBadRequest, "validation_error", validationMessage(err))
 		return
 	}
 
@@ -294,7 +357,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.v.Struct(req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "validation_error", err.Error())
+		writeJSONError(w, http.StatusBadRequest, "validation_error", validationMessage(err))
 		return
 	}
 

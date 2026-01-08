@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -52,10 +53,10 @@ func generateUUID() string {
 
 func parseFormList(r *http.Request, key string) []string {
     if r.MultipartForm == nil {
-        return nil
+        return []string{}
     }
 
-    var out []string
+    var out = []string{}
     if vs := r.MultipartForm.Value[key]; len(vs) > 0 {
         for _, v := range vs {
             for _, part := range strings.Split(v, ",") {
@@ -141,6 +142,7 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     }
 
     var uploadedCreatives []*models.Creative
+    var errors []string
     uploader := manager.NewUploader(h.s3Client)
 
     // 5. Process each file
@@ -176,7 +178,7 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         file.Close() // Close the file when done
 
         if err != nil {
-            log.Printf("Failed to upload file %s to S3: %v", fileHeader.Filename, err)
+            errors = append(errors, fmt.Sprintf("Failed to upload %s to S3: %v", fileHeader.Filename, err))
             continue
         }
 
@@ -188,7 +190,7 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
 
         // Save to database
         if err := h.repo.Create(r.Context(), creative); err != nil {
-            log.Printf("Failed to save creative %s: %v", fileHeader.Filename, err)
+            errors = append(errors, fmt.Sprintf("Failed to save %s: %v", fileHeader.Filename, err))
             continue
         }
 
@@ -197,7 +199,11 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
 
     // 6. Return the uploaded creatives
     if len(uploadedCreatives) == 0 {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", "Failed to upload any files")
+        if len(errors) > 0 {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", strings.Join(errors, "; "))
+        } else {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", "Failed to upload any files")
+        }
         return
     }
 

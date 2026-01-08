@@ -5,6 +5,7 @@ import (
     "net/http"
 
     "github.com/go-chi/chi/v5"
+    "github.com/go-playground/validator/v10"
     "golang.org/x/crypto/bcrypt"
     "scm/internal/models"
     "scm/internal/repository"
@@ -12,10 +13,13 @@ import (
 
 type UserHandler struct {
     users repository.UserRepository
+    v     *validator.Validate
 }
 
 func NewUserHandler(users repository.UserRepository) *UserHandler {
-    return &UserHandler{users: users}
+    v := validator.New()
+    _ = v.RegisterValidation("strongpassword", strongPassword)
+    return &UserHandler{users: users, v: v}
 }
 
 // @Tags Account
@@ -107,6 +111,13 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    if req.UserName != nil {
+        if err := h.v.Var(*req.UserName, "alphanum"); err != nil {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "user_name must contain only letters and numbers")
+            return
+        }
+    }
+
     if err := h.users.UpdateProfile(r.Context(), id, &req); err != nil {
         if err.Error() == "user not found" {
             writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
@@ -151,12 +162,9 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
         writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
     }
-    if req.OldPassword == "" || req.NewPassword == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "old_password and new_password are required")
-        return
-    }
-    if len(req.NewPassword) < 8 {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "new_password must be at least 8 characters")
+
+    if err := h.v.Struct(req); err != nil {
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", validationMessage(err))
         return
     }
 
