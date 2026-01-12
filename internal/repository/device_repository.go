@@ -131,7 +131,7 @@ func (r *deviceRepository) List(ctx context.Context, limit int, offset int) ([]*
 			last_synced_at, sync_status, project, device_config, rtty_data,
 			created_at, updated_at
 		FROM devices
-		ORDER BY created_at DESC
+		ORDER BY host_name ASC
 	`
 
 	args := []interface{}{}
@@ -194,7 +194,7 @@ func (r *deviceRepository) ListByProject(ctx context.Context, projectID int, lim
 			created_at, updated_at
 		FROM devices
 		WHERE project = $1
-		ORDER BY created_at DESC
+		ORDER BY host_name ASC
 	`
 
 	args := []interface{}{projectID}
@@ -288,7 +288,7 @@ func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFi
 		argIndex++
 	}
 
-	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+	query += fmt.Sprintf(" ORDER BY host_name ASC LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
 	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -456,7 +456,7 @@ func (r *deviceRepository) Search(ctx context.Context, term string, city *string
 			created_at, updated_at
 		FROM devices
 		WHERE %s
-		ORDER BY updated_at DESC
+		ORDER BY host_name ASC
 		LIMIT $%d OFFSET $%d
 	`, whereClause, argIndex, argIndex+1)
 
