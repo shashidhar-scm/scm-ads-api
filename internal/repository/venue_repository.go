@@ -319,9 +319,11 @@ func (r *venueRepository) GetVenuesByDeviceID(ctx context.Context, deviceID int,
 	var venues []*models.Venue
 	for rows.Next() {
 		var venue models.Venue
-		if err := rows.Scan(&venue.ID, &venue.Name, &venue.CreatedAt, &venue.UpdatedAt); err != nil {
+		var subCategory pq.StringArray
+		if err := rows.Scan(&venue.ID, &venue.Name, &subCategory, &venue.CreatedAt, &venue.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan venue: %w", err)
 		}
+		venue.SubCategory = []string(subCategory)
 		venues = append(venues, &venue)
 	}
 	
