@@ -56,6 +56,7 @@ type AuthHandler struct {
 	resets repository.PasswordResetRepository
 	userRoles repository.UserRoleRepository
 	mailer services.EmailSender
+	db     *sql.DB
 	cfg    *config.Config
 	v      *validator.Validate
 }
@@ -68,6 +69,7 @@ func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender)
 		resets: repository.NewPasswordResetRepository(db),
 		userRoles: repository.NewUserRoleRepository(db),
 		mailer: mailer,
+		db:     db,
 		cfg:    cfg,
 		v:      v,
 	}
@@ -162,6 +164,21 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Assign the default global advertiser role to every new signup.
+	if h.db != nil {
+		var roleID string
+		if err := h.db.QueryRowContext(r.Context(), `SELECT id FROM roles WHERE name = 'advertiser' LIMIT 1`).Scan(&roleID); err != nil {
+			_, _ = h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, u.ID)
+			writeJSONError(w, http.StatusInternalServerError, "create_user_failed", "Failed to create user")
+			return
+		}
+		if _, err := h.db.ExecContext(r.Context(), `INSERT INTO user_roles (user_id, role_id, advertiser_id) VALUES ($1, $2, NULL) ON CONFLICT DO NOTHING`, u.ID, roleID); err != nil {
+			_, _ = h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, u.ID)
+			writeJSONError(w, http.StatusInternalServerError, "create_user_failed", "Failed to create user")
+			return
+		}
+	}
+
 	subject := "Welcome to SCM Ads"
 	dashboardURL := strings.TrimSpace(h.cfg.DashboardBaseURL)
 	body := "<html><body style=\"font-family:Arial,sans-serif; color:#111;\">" +
@@ -228,6 +245,40 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		expiresIn = 86400
 	}
 
+	var roles []models.LoginRole
+	if h.db != nil {
+		rows, err := h.db.QueryContext(r.Context(), `
+			SELECT ro.name, ur.advertiser_id
+			FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = $1
+			ORDER BY ro.name ASC, ur.advertiser_id ASC
+		`, u.ID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var advertiserID sql.NullString
+			if err := rows.Scan(&name, &advertiserID); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
+				return
+			}
+			var adv *string
+			if advertiserID.Valid {
+				v := advertiserID.String
+				adv = &v
+			}
+			roles = append(roles, models.LoginRole{Name: name, AdvertiserID: adv})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
+			return
+		}
+	}
+
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
 		"sub":   u.ID,
@@ -268,6 +319,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Name:        u.Name,
 		UserName:    u.UserName,
 		PhoneNumber: u.PhoneNumber,
+		Roles:       roles,
 	})
 }
 

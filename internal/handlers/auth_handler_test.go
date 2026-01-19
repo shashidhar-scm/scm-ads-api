@@ -205,6 +205,10 @@ func TestSignupSuccess(t *testing.T) {
 	mock.ExpectQuery("INSERT INTO users").WillReturnRows(
 		sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now().UTC()),
 	)
+	mock.ExpectQuery("SELECT id FROM roles WHERE name = 'advertiser'").WillReturnRows(
+		sqlmock.NewRows([]string{"id"}).AddRow("role-adv"),
+	)
+	mock.ExpectExec("INSERT INTO user_roles").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	m := &recordingMailer{}
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev", DashboardBaseURL: "https://dashboard.example"}, services.EmailSender(m))
@@ -301,6 +305,15 @@ func TestLoginSuccess(t *testing.T) {
 			AddRow("u1", "a@b.com", "A", "a", "999", string(hash), time.Now().UTC()),
 	)
 
+	mock.ExpectQuery(`SELECT DISTINCT advertiser_id\s+FROM user_roles`).WithArgs("u1").WillReturnRows(
+		sqlmock.NewRows([]string{"advertiser_id"}),
+	)
+
+	mock.ExpectQuery(`SELECT ro\.name, ur\.advertiser_id\s+FROM user_roles ur`).WithArgs("u1").WillReturnRows(
+		sqlmock.NewRows([]string{"name", "advertiser_id"}).
+			AddRow("advertiser", nil),
+	)
+
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
 	payload := map[string]any{"identifier": "a@b.com", "password": "Password1!"}
 	b, _ := json.Marshal(payload)
@@ -317,6 +330,9 @@ func TestLoginSuccess(t *testing.T) {
 	}
 	if resp["access_token"] == nil {
 		t.Fatalf("expected access_token, got %v", resp)
+	}
+	if resp["roles"] == nil {
+		t.Fatalf("expected roles in response, got %v", resp)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -129,13 +129,29 @@ func RequirePermissionNoAdvertiserSelection(db *sql.DB, permission string) func(
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return
 			}
-			if ok {
-				ctx := context.WithValue(r.Context(), CtxPermissionGlobal, true)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
 
 			allowedAdvertisers, _ := r.Context().Value(CtxAdvertiserIDs).([]string)
+			if ok {
+				// If the token carries advertiser scopes, prefer scoped behavior (Option A):
+				// list endpoints should be filtered to those scopes instead of returning all data.
+				if len(allowedAdvertisers) == 0 {
+					// For advertisers.read, do not return the full advertiser list to non-super users
+					// just because they have a global role. Treat as scoped with an empty set.
+					if permission == "advertisers.read" {
+						ctx := r.Context()
+						ctx = context.WithValue(ctx, CtxAdvertiserIDs, []string{})
+						ctx = context.WithValue(ctx, CtxPermissionGlobal, false)
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
+
+					ctx := context.WithValue(r.Context(), CtxPermissionGlobal, true)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+				// Fall through to scoped path below to filter advertiser_ids to ones that truly have this permission.
+			}
+
 			if len(allowedAdvertisers) == 0 {
 				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
 				return

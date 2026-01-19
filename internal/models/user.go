@@ -25,6 +25,11 @@ type LoginRequest struct {
 	Password   string `json:"password" validate:"required"`
 }
 
+type LoginRole struct {
+	Name         string  `json:"name"`
+	AdvertiserID *string `json:"advertiser_id"`
+}
+
 type LoginResponse struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int64  `json:"expires_in"`
@@ -33,6 +38,7 @@ type LoginResponse struct {
 	UserName    string `json:"user_name,omitempty"`
 	PhoneNumber string `json:"phone_number,omitempty"`
 	ID          string `json:"id"`
+	Roles       []LoginRole `json:"roles"`
 }
 
 type ForgotPasswordRequest struct {
