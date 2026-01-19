@@ -103,6 +103,7 @@ func (h *CampaignHandler) GetCampaignImpressions(w http.ResponseWriter, r *http.
 // @Security BearerAuth
 // @Accept json
 // @Produce json
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param body body models.CreateCampaignRequest true "Create campaign request"
 // @Success 201 {object} models.Campaign
 // @Failure 400 {object} map[string]interface{}
@@ -159,6 +160,7 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Campaign ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} models.Campaign
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
@@ -189,7 +191,9 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 // @Summary List campaigns
 // @Security BearerAuth
 // @Produce json
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/campaigns/ [get]
 func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +302,7 @@ func (h *CampaignHandler) SearchCampaigns(w http.ResponseWriter, r *http.Request
 // @Security BearerAuth
 // @Produce json
 // @Param advertiserID path string true "Advertiser ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -363,6 +368,7 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
 // @Accept json
 // @Produce json
 // @Param id path string true "Campaign ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param body body models.UpdateCampaignRequest true "Update campaign request"
 // @Success 200 {object} models.Campaign
 // @Failure 400 {object} map[string]interface{}
@@ -444,6 +450,7 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Campaign ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}

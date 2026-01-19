@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"scm/internal/handlers"
+	authmw "scm/internal/middleware"
 	"scm/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -14,8 +15,8 @@ func RegisterProjectRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewProjectHandler(repo)
 
 	r.Route("/projects", func(r chi.Router) {
-		r.Get("/search", handler.Search)
-		r.Get("/", handler.List)
-		r.Get("/{name}", handler.Get)
+		r.With(authmw.RequirePermission(db, "projects.read")).Get("/search", handler.Search)
+		r.With(authmw.RequirePermission(db, "projects.read")).Get("/", handler.List)
+		r.With(authmw.RequirePermission(db, "projects.read")).Get("/{name}", handler.Get)
 	})
 }

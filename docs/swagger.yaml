@@ -1,5 +1,31 @@
 basePath: /
 definitions:
+  handlers.DeviceQueryFilters:
+    properties:
+      city:
+        type: string
+      device_type:
+        type: string
+      project_id:
+        type: integer
+      region:
+        type: string
+      test:
+        type: boolean
+    type: object
+  handlers.DeviceQueryRequest:
+    properties:
+      fields:
+        items:
+          type: string
+        type: array
+      filters:
+        $ref: '#/definitions/handlers.DeviceQueryFilters'
+      page:
+        type: integer
+      page_size:
+        type: integer
+    type: object
   models.Advertiser:
     properties:
       created_at:
@@ -41,6 +67,8 @@ definitions:
         type: string
       impressions:
         type: integer
+      lifetime_impressions:
+        type: integer
       name:
         type: string
       spent:
@@ -78,11 +106,12 @@ definitions:
         type: string
       old_password:
         type: string
+    required:
+    - new_password
+    - old_password
     type: object
   models.CreateAdvertiserRequest:
     properties:
-      created_by:
-        type: string
       email:
         type: string
       name:
@@ -90,7 +119,6 @@ definitions:
         minLength: 3
         type: string
     required:
-    - created_by
     - name
     type: object
   models.CreateCampaignRequest:
@@ -115,6 +143,24 @@ definitions:
     - end_date
     - name
     - start_date
+    type: object
+  models.CreatePermissionRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  models.CreateRoleRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
     type: object
   models.Creative:
     properties:
@@ -232,6 +278,8 @@ definitions:
         type: string
       expires_in:
         type: integer
+      id:
+        type: string
       name:
         type: string
       phone_number:
@@ -242,6 +290,17 @@ definitions:
   models.Owner:
     properties:
       username:
+        type: string
+    type: object
+  models.Permission:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
         type: string
     type: object
   models.Project:
@@ -370,13 +429,43 @@ definitions:
   models.ResetPasswordRequest:
     properties:
       new_password:
-        minLength: 8
         type: string
       token:
         type: string
     required:
     - new_password
     - token
+    type: object
+  models.Role:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_system:
+        type: boolean
+      name:
+        type: string
+    type: object
+  models.SetRolePermissionsRequest:
+    properties:
+      permission_ids:
+        items:
+          type: string
+        type: array
+    required:
+    - permission_ids
+    type: object
+  models.SetUserRolesRequest:
+    properties:
+      roles:
+        items:
+          $ref: '#/definitions/models.UserRoleAssignment'
+        type: array
+    required:
+    - roles
     type: object
   models.UpdateAdvertiserRequest:
     properties:
@@ -438,6 +527,20 @@ definitions:
       url:
         type: string
     type: object
+  models.UpdatePermissionRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  models.UpdateRoleRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
   models.UpdateUserRequest:
     properties:
       email:
@@ -466,6 +569,15 @@ definitions:
     required:
     - email
     type: object
+  models.UserRoleAssignment:
+    properties:
+      advertiser_id:
+        type: string
+      role_id:
+        type: string
+    required:
+    - role_id
+    type: object
   models.Venue:
     properties:
       created_at:
@@ -474,12 +586,37 @@ definitions:
         type: integer
       name:
         type: string
+      sub_category:
+        items:
+          type: string
+        type: array
       updated_at:
         type: string
     type: object
+  models.VenueRequest:
+    properties:
+      name:
+        type: string
+      sub_category:
+        items:
+          type: string
+        type: array
+    type: object
+  models.VenueUpdateRequest:
+    properties:
+      name:
+        type: string
+      sub_category:
+        items:
+          type: string
+        type: array
+    type: object
 info:
   contact: {}
-  description: SCM Ads API documentation
+  description: SCM Ads API documentation. For users with advertiser-scoped roles,
+    JWTs may include an advertiser_ids claim (array). When accessing endpoints with
+    advertiser-scoped permissions, provide X-Advertiser-Id to select the active advertiser
+    scope; if missing, the API may return 400 advertiser_not_selected.
   title: SCM Ads API
   version: 1.0.0
 paths:
@@ -523,6 +660,11 @@ paths:
             $ref: '#/definitions/models.Advertiser'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
           schema:
             additionalProperties: true
             type: object
@@ -653,6 +795,47 @@ paths:
       summary: Update advertiser
       tags:
       - Advertisers
+  /api/v1/advertisers/search:
+    get:
+      parameters:
+      - description: Search text (matches name or email)
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search advertisers
+      tags:
+      - Advertisers
   /api/v1/auth/forgot-password:
     post:
       consumes:
@@ -750,11 +933,21 @@ paths:
       - Account
   /api/v1/campaigns/:
     get:
+      parameters:
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
           schema:
             additionalProperties: true
             type: object
@@ -772,6 +965,10 @@ paths:
       consumes:
       - application/json
       parameters:
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       - description: Create campaign request
         in: body
         name: body
@@ -807,6 +1004,10 @@ paths:
         in: path
         name: id
         required: true
+        type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
         type: string
       produces:
       - application/json
@@ -848,6 +1049,10 @@ paths:
         name: id
         required: true
         type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       produces:
       - application/json
       responses:
@@ -884,6 +1089,10 @@ paths:
         name: id
         required: true
         type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       - description: Update campaign request
         in: body
         name: body
@@ -917,6 +1126,42 @@ paths:
       summary: Update campaign
       tags:
       - Campaigns
+  /api/v1/campaigns/{id}/impressions:
+    get:
+      parameters:
+      - description: Campaign ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Campaign lifetime impressions
+      tags:
+      - Campaigns
   /api/v1/campaigns/advertiser/{advertiserID}:
     get:
       parameters:
@@ -924,6 +1169,10 @@ paths:
         in: path
         name: advertiserID
         required: true
+        type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
         type: string
       produces:
       - application/json
@@ -948,8 +1197,55 @@ paths:
       summary: List campaigns by advertiser
       tags:
       - Campaigns
+  /api/v1/campaigns/search:
+    get:
+      parameters:
+      - description: Search text (matches name, cities, start/end dates, budget, spent,
+          impressions, clicks)
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search campaigns
+      tags:
+      - Campaigns
   /api/v1/creatives/:
     get:
+      parameters:
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       produces:
       - application/json
       responses:
@@ -959,6 +1255,11 @@ paths:
             items:
               $ref: '#/definitions/models.Creative'
             type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -976,6 +1277,10 @@ paths:
         in: path
         name: id
         required: true
+        type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
         type: string
       produces:
       - application/json
@@ -1012,6 +1317,10 @@ paths:
         name: id
         required: true
         type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       produces:
       - application/json
       responses:
@@ -1042,16 +1351,20 @@ paths:
     put:
       consumes:
       - application/json
-      - multipart/form-data
       parameters:
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       - description: Creative ID
         in: path
         name: id
         required: true
         type: string
-      - description: Update creative request (JSON)
+      - description: Update creative request
         in: body
         name: body
+        required: true
         schema:
           $ref: '#/definitions/models.UpdateCreativeRequest'
       produces:
@@ -1060,8 +1373,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/models.Creative'
         "400":
           description: Bad Request
           schema:
@@ -1089,6 +1401,10 @@ paths:
         in: path
         name: campaignID
         required: true
+        type: string
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
         type: string
       produces:
       - application/json
@@ -1148,11 +1464,56 @@ paths:
       summary: List creatives by device
       tags:
       - Creatives
+  /api/v1/creatives/search:
+    get:
+      parameters:
+      - description: Search text (matches name, type, selected days, time slots, devices)
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search creatives
+      tags:
+      - Creatives
   /api/v1/creatives/upload:
     post:
       consumes:
       - multipart/form-data
       parameters:
+      - description: Active advertiser scope (required for advertiser-scoped users)
+        in: header
+        name: X-Advertiser-Id
+        type: string
       - description: Campaign ID
         in: formData
         name: campaign_id
@@ -1230,6 +1591,10 @@ paths:
         in: query
         name: device_type
         type: string
+      - description: Filter by test flag (device_config.test)
+        in: query
+        name: test
+        type: boolean
       produces:
       - application/json
       responses:
@@ -1329,6 +1694,260 @@ paths:
       summary: Get device
       tags:
       - Devices
+  /api/v1/devices/counts/regions:
+    get:
+      parameters:
+      - description: Filter by city
+        in: query
+        name: city
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Region-wise device counts
+      tags:
+      - Devices
+  /api/v1/devices/query:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Device query request with filters and optional fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.DeviceQueryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query devices with filters and selectable fields
+      tags:
+      - Devices
+  /api/v1/devices/search:
+    get:
+      parameters:
+      - description: Search text (matches host_name, name, description, address)
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 25
+        description: Maximum results to return
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search devices
+      tags:
+      - Devices
+  /api/v1/permissions:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List permissions
+      tags:
+      - Permissions
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Create permission request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreatePermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Permission'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create permission
+      tags:
+      - Permissions
+  /api/v1/permissions/{id}:
+    delete:
+      parameters:
+      - description: Permission ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete permission
+      tags:
+      - Permissions
+    get:
+      parameters:
+      - description: Permission ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Permission'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get permission
+      tags:
+      - Permissions
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Permission ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update permission request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdatePermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Permission'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update permission
+      tags:
+      - Permissions
   /api/v1/projects:
     get:
       parameters:
@@ -1342,6 +1961,18 @@ paths:
         in: query
         name: page_size
         type: integer
+      - description: Search text (matches name, description)
+        in: query
+        name: query
+        type: string
+      - description: Filter by city
+        in: query
+        name: city
+        type: string
+      - description: Filter by region
+        in: query
+        name: region
+        type: string
       produces:
       - application/json
       responses:
@@ -1400,6 +2031,285 @@ paths:
       summary: Get project
       tags:
       - Projects
+  /api/v1/projects/search:
+    get:
+      parameters:
+      - description: Search text (matches name, description)
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search projects
+      tags:
+      - Projects
+  /api/v1/roles:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List roles
+      tags:
+      - Roles
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Create role request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Role'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create role
+      tags:
+      - Roles
+  /api/v1/roles/{id}:
+    delete:
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete role
+      tags:
+      - Roles
+    get:
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Role'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get role
+      tags:
+      - Roles
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update role request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Role'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update role
+      tags:
+      - Roles
+  /api/v1/roles/{id}/permissions:
+    get:
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get role permissions
+      tags:
+      - Roles
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Set role permissions request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.SetRolePermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set role permissions
+      tags:
+      - Roles
   /api/v1/users/:
     get:
       produces:
@@ -1582,6 +2492,75 @@ paths:
       summary: Change password
       tags:
       - Account
+  /api/v1/users/{id}/roles:
+    get:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List user role assignments
+      tags:
+      - UserRoles
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Set user roles request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.SetUserRolesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Replace user role assignments
+      tags:
+      - UserRoles
   /api/v1/venues:
     get:
       parameters:
@@ -1627,7 +2606,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.Venue'
+          $ref: '#/definitions/models.VenueRequest'
       produces:
       - application/json
       responses:
@@ -1735,7 +2714,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.Venue'
+          $ref: '#/definitions/models.VenueUpdateRequest'
       produces:
       - application/json
       responses:
@@ -1913,6 +2892,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Add devices to venue
+      tags:
+      - Venues
+  /api/v1/venues/search:
+    get:
+      parameters:
+      - description: Search text (matches name or sub_category)
+        in: query
+        name: query
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search venues
       tags:
       - Venues
 securityDefinitions:

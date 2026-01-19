@@ -21,17 +21,30 @@ func (m *mockAdvertiserRepo) Create(ctx context.Context, advertiser *models.Adve
 func (m *mockAdvertiserRepo) GetByID(ctx context.Context, id string) (*models.Advertiser, error) {
 	return nil, sql.ErrNoRows
 }
+func (m *mockAdvertiserRepo) GetByIDInSet(ctx context.Context, id string, allowedIDs []string) (*models.Advertiser, error) {
+	return nil, sql.ErrNoRows
+}
 func (m *mockAdvertiserRepo) List(ctx context.Context, limit int, offset int) ([]models.Advertiser, error) {
 	return []models.Advertiser{}, nil
 }
+func (m *mockAdvertiserRepo) ListByIDs(ctx context.Context, allowedIDs []string, limit int, offset int) ([]models.Advertiser, error) {
+	return []models.Advertiser{}, nil
+}
 func (m *mockAdvertiserRepo) Count(ctx context.Context) (int, error) { return 0, nil }
+func (m *mockAdvertiserRepo) CountByIDs(ctx context.Context, allowedIDs []string) (int, error) { return 0, nil }
+func (m *mockAdvertiserRepo) Search(ctx context.Context, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	return []models.Advertiser{}, 0, nil
+}
+func (m *mockAdvertiserRepo) SearchByIDs(ctx context.Context, allowedIDs []string, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	return []models.Advertiser{}, 0, nil
+}
 func (m *mockAdvertiserRepo) Update(ctx context.Context, id string, req *models.UpdateAdvertiserRequest) error {
 	return nil
 }
 func (m *mockAdvertiserRepo) Delete(ctx context.Context, id string) error { return nil }
 
 func TestGetAdvertiserNotFoundJSON(t *testing.T) {
-	h := NewAdvertiserHandler(&mockAdvertiserRepo{})
+	h := NewAdvertiserHandler(&mockAdvertiserRepo{}, nil)
 	r := chi.NewRouter()
 	r.Get("/advertisers/{id}", h.GetAdvertiser)
 

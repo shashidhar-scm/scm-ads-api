@@ -2,7 +2,7 @@
 //
 // @title SCM Ads API
 // @version 1.0.0
-// @description SCM Ads API documentation
+// @description SCM Ads API documentation. For users with advertiser-scoped roles, JWTs may include an advertiser_ids claim (array). When accessing endpoints with advertiser-scoped permissions, provide X-Advertiser-Id to select the active advertiser scope; if missing, the API may return 400 advertiser_not_selected.
 // @BasePath /
 // @securityDefinitions.apikey BearerAuth
 // @in header

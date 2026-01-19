@@ -54,6 +54,7 @@ func validationMessage(err error) string {
 type AuthHandler struct {
 	users  repository.UserRepository
 	resets repository.PasswordResetRepository
+	userRoles repository.UserRoleRepository
 	mailer services.EmailSender
 	cfg    *config.Config
 	v      *validator.Validate
@@ -65,6 +66,7 @@ func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender)
 	return &AuthHandler{
 		users:  repository.NewUserRepository(db),
 		resets: repository.NewPasswordResetRepository(db),
+		userRoles: repository.NewUserRoleRepository(db),
 		mailer: mailer,
 		cfg:    cfg,
 		v:      v,
@@ -232,6 +234,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"email": u.Email,
 		"iat":   now.Unix(),
 		"exp":   now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+	}
+
+	// If the user has scoped advertiser assignments, include advertiser_ids claim
+	if h.userRoles != nil {
+		advIDs, err := h.userRoles.ListScopedAdvertiserIDs(r.Context(), u.ID)
+		if err == nil {
+			var cleaned []string
+			for _, id := range advIDs {
+				id = strings.TrimSpace(id)
+				if id != "" {
+					cleaned = append(cleaned, id)
+				}
+			}
+			if len(cleaned) > 0 {
+				claims["advertiser_ids"] = cleaned
+			}
+		}
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(h.cfg.JWTSecret))

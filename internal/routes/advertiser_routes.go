@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"scm/internal/handlers"
+	authmw "scm/internal/middleware"
 	"scm/internal/repository"
 )
 
@@ -14,17 +15,17 @@ func RegisterAdvertiserRoutes(router chi.Router, db *sql.DB) {
 	
 	// Initialize repository and handler
 	advertiserRepo := repository.NewAdvertiserRepository(db)
-	advertiserHandler := handlers.NewAdvertiserHandler(advertiserRepo)
+	advertiserHandler := handlers.NewAdvertiserHandler(advertiserRepo, db)
 
 	// Define routes
 	router.Route("/advertisers", func(r chi.Router) {
-		r.Get("/search", advertiserHandler.SearchAdvertisers)
-		r.Get("/", advertiserHandler.ListAdvertisers)
-		r.Post("/", advertiserHandler.CreateAdvertiser)
+		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "advertisers.read")).Get("/search", advertiserHandler.SearchAdvertisers)
+		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "advertisers.read")).Get("/", advertiserHandler.ListAdvertisers)
+		r.With(authmw.RequirePermission(db, "advertisers.write")).Post("/", advertiserHandler.CreateAdvertiser)
 		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", advertiserHandler.GetAdvertiser)
-			r.Put("/", advertiserHandler.UpdateAdvertiser)
-			r.Delete("/", advertiserHandler.DeleteAdvertiser)
+			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "advertisers.read")).Get("/", advertiserHandler.GetAdvertiser)
+			r.With(authmw.RequirePermission(db, "advertisers.write")).Put("/", advertiserHandler.UpdateAdvertiser)
+			r.With(authmw.RequirePermission(db, "advertisers.write")).Delete("/", advertiserHandler.DeleteAdvertiser)
 		})
 	})
 }

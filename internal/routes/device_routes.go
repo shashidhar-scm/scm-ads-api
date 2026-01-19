@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"scm/internal/handlers"
+	authmw "scm/internal/middleware"
 	"scm/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -14,10 +15,10 @@ func RegisterDeviceReadRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewDeviceReadHandler(repo)
 
 	r.Route("/devices", func(r chi.Router) {
-		r.Post("/query", handler.Query)
-		r.Get("/search", handler.Search)
-		r.Get("/counts/regions", handler.CountByRegion)
-		r.Get("/", handler.List)
-		r.Get("/{hostName}", handler.Get)
+		r.With(authmw.RequirePermission(db, "devices.read")).Post("/query", handler.Query)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/search", handler.Search)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/counts/regions", handler.CountByRegion)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/", handler.List)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/{hostName}", handler.Get)
 	})
 }

@@ -16,7 +16,6 @@ type Advertiser struct {
 type CreateAdvertiserRequest struct {
 	Name      string `json:"name" validate:"required,min=3,max=255"`
 	Email     string `json:"email,omitempty" validate:"omitempty,email"`
-	CreatedBy string `json:"created_by" validate:"required,uuid"`
 }
 
 type UpdateAdvertiserRequest struct {

@@ -5,6 +5,7 @@ import (
     "database/sql"
     "github.com/go-chi/chi/v5"
     "scm/internal/handlers"
+    authmw "scm/internal/middleware"
     "scm/internal/services"
     "scm/internal/repository"
     "log"
@@ -19,19 +20,19 @@ func RegisterCampaignRoutes(router chi.Router, db *sql.DB, popBaseURL string) {
     campaignHandler := handlers.NewCampaignHandlerWithPop(campaignRepo, popClient)
 
     router.Route("/campaigns", func(r chi.Router) {
-        r.Get("/search", campaignHandler.SearchCampaigns)
-        r.Get("/", campaignHandler.ListCampaigns)
-        r.Get("/advertiser/{advertiserID}", campaignHandler.ListCampaignsByAdvertiser)
-        r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+        r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/search", campaignHandler.SearchCampaigns)
+        r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/", campaignHandler.ListCampaigns)
+        r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/advertiser/{advertiserID}", campaignHandler.ListCampaignsByAdvertiser)
+        r.With(authmw.RequirePermission(db, "campaigns.write")).Post("/", func(w http.ResponseWriter, r *http.Request) {
             log.Println("POST /campaigns endpoint hit")
             campaignHandler.CreateCampaign(w, r)
         })
         
         r.Route("/{id}", func(r chi.Router) {
-            r.Get("/", campaignHandler.GetCampaign)
-			r.Get("/impressions", campaignHandler.GetCampaignImpressions)
-            r.Put("/", campaignHandler.UpdateCampaign)
-            r.Delete("/", campaignHandler.DeleteCampaign)
+            r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/", campaignHandler.GetCampaign)
+			r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/impressions", campaignHandler.GetCampaignImpressions)
+            r.With(authmw.RequirePermission(db, "campaigns.write")).Put("/", campaignHandler.UpdateCampaign)
+            r.With(authmw.RequirePermission(db, "campaigns.write")).Delete("/", campaignHandler.DeleteCampaign)
         })
 
     })

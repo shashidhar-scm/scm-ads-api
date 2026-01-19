@@ -7,6 +7,7 @@ import (
     "github.com/go-chi/chi/v5"
     "scm/internal/config"
     "scm/internal/handlers"
+	authmw "scm/internal/middleware"
     "scm/internal/repository"
 )
 
@@ -24,14 +25,14 @@ func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Co
     creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config)
 
     router.Route("/creatives", func(r chi.Router) {
-        r.Get("/search", creativeHandler.SearchCreatives)
-        r.Get("/", creativeHandler.ListCreatives)
-        r.Post("/upload", creativeHandler.UploadCreative)
-        r.Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)
+        r.With(authmw.RequirePermission(db, "creatives.read")).Get("/search", creativeHandler.SearchCreatives)
+        r.With(authmw.RequirePermission(db, "creatives.read")).Get("/", creativeHandler.ListCreatives)
+        r.With(authmw.RequirePermission(db, "creatives.write")).Post("/upload", creativeHandler.UploadCreative)
+        r.With(authmw.RequirePermission(db, "creatives.read")).Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)
         r.Route("/{id}", func(r chi.Router) {
-            r.Get("/", creativeHandler.GetCreative)
-            r.Put("/", creativeHandler.UpdateCreative)
-            r.Delete("/", creativeHandler.DeleteCreative)
+            r.With(authmw.RequirePermission(db, "creatives.read")).Get("/", creativeHandler.GetCreative)
+            r.With(authmw.RequirePermission(db, "creatives.write")).Put("/", creativeHandler.UpdateCreative)
+            r.With(authmw.RequirePermission(db, "creatives.write")).Delete("/", creativeHandler.DeleteCreative)
         })
     })
 }

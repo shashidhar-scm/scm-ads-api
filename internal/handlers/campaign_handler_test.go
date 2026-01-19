@@ -164,6 +164,12 @@ func (m *mockCampaignRepo) CompleteActiveEndedBefore(ctx context.Context, now ti
 }
 func (m *mockCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (m *mockCampaignRepo) Delete(ctx context.Context, id string) error                         { return nil }
+func (m *mockCampaignRepo) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
+	return []*models.Campaign{}, nil
+}
+func (m *mockCampaignRepo) ListByEndDate(ctx context.Context, endDate time.Time) ([]*models.Campaign, error) {
+	return []*models.Campaign{}, nil
+}
 
 type mockCampaignRepoWithCampaigns struct{}
 
@@ -195,6 +201,12 @@ func (m *mockCampaignRepoWithCampaigns) CompleteActiveEndedBefore(ctx context.Co
 }
 func (m *mockCampaignRepoWithCampaigns) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (m *mockCampaignRepoWithCampaigns) Delete(ctx context.Context, id string) error                         { return nil }
+func (m *mockCampaignRepoWithCampaigns) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
+	return []*models.Campaign{}, nil
+}
+func (m *mockCampaignRepoWithCampaigns) ListByEndDate(ctx context.Context, endDate time.Time) ([]*models.Campaign, error) {
+	return []*models.Campaign{}, nil
+}
 
 func TestGetCampaignNotFoundReturnsJSON(t *testing.T) {
 	h := NewCampaignHandler(&mockCampaignRepo{})

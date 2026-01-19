@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,20 +12,36 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/lib/pq"
 	"scm/internal/interfaces"
+	"scm/internal/middleware"
 	"scm/internal/models"
 )
 
 type AdvertiserHandler struct {
     repo      interfaces.AdvertiserRepository
+    db        *sql.DB
     validator *validator.Validate
 }
 
-func NewAdvertiserHandler(repo interfaces.AdvertiserRepository) *AdvertiserHandler {
+func NewAdvertiserHandler(repo interfaces.AdvertiserRepository, db *sql.DB) *AdvertiserHandler {
     return &AdvertiserHandler{
         repo:      repo,
+        db:        db,
         validator: validator.New(),
     }
+}
+
+func (h *AdvertiserHandler) assignCreatorAdvertiserRole(ctx context.Context, userID string, advertiserID string) error {
+	if h.db == nil {
+		return nil
+	}
+	var roleID string
+	if err := h.db.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = 'advertiser' LIMIT 1`).Scan(&roleID); err != nil {
+		return err
+	}
+	_, err := h.db.ExecContext(ctx, `INSERT INTO user_roles (user_id, role_id, advertiser_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, userID, roleID, advertiserID)
+	return err
 }
 
 // @Tags Advertisers
@@ -35,10 +52,16 @@ func NewAdvertiserHandler(repo interfaces.AdvertiserRepository) *AdvertiserHandl
 // @Param body body models.CreateAdvertiserRequest true "Create advertiser request"
 // @Success 201 {object} models.Advertiser
 // @Failure 400 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/advertisers/ [post]
 func (h *AdvertiserHandler) CreateAdvertiser(w http.ResponseWriter, r *http.Request) {
 	log.Println("=== CreateAdvertiser handler called ===")
+	createdBy, _ := r.Context().Value(middleware.CtxUserID).(string)
+	if strings.TrimSpace(createdBy) == "" {
+		writeJSONErrorResponse(w, http.StatusUnauthorized, "unauthorized", "missing user identity")
+		return
+	}
 	
 	var req models.CreateAdvertiserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -54,10 +77,24 @@ func (h *AdvertiserHandler) CreateAdvertiser(w http.ResponseWriter, r *http.Requ
 	advertiser := &models.Advertiser{
 		Name:      req.Name,
 		Email:     req.Email,
-		CreatedBy: req.CreatedBy,
+		CreatedBy: createdBy,
 	}
 
 	if err := h.repo.Create(r.Context(), advertiser); err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			// 23505 = unique_violation
+			if pqErr.Code == "23505" {
+				writeJSONErrorResponse(w, http.StatusConflict, "advertiser_already_exists", "Advertiser already exists")
+				return
+			}
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "create_advertiser_failed", "Failed to create advertiser")
+		return
+	}
+
+	if err := h.assignCreatorAdvertiserRole(r.Context(), createdBy, advertiser.ID); err != nil {
+		_ = h.repo.Delete(r.Context(), advertiser.ID)
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "create_advertiser_failed", "Failed to create advertiser")
 		return
 	}
@@ -84,7 +121,15 @@ func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	advertiser, err := h.repo.GetByID(r.Context(), id)
+	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
+	var advertiser *models.Advertiser
+	var err error
+	if permissionGlobal {
+		advertiser, err = h.repo.GetByID(r.Context(), id)
+	} else {
+		allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
+		advertiser, err = h.repo.GetByIDInSet(r.Context(), id, allowedIDs)
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeJSONErrorResponse(w, http.StatusNotFound, "advertiser_not_found", "Advertiser not found")
@@ -112,13 +157,26 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	total, err := h.repo.Count(r.Context())
+	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
+	allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
+
+	var total int
+	if permissionGlobal {
+		total, err = h.repo.Count(r.Context())
+	} else {
+		total, err = h.repo.CountByIDs(r.Context(), allowedIDs)
+	}
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_advertisers_failed", "Failed to list advertisers")
 		return
 	}
 
-	advertisers, err := h.repo.List(r.Context(), p.limit, p.offset)
+	var advertisers []models.Advertiser
+	if permissionGlobal {
+		advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
+	} else {
+		advertisers, err = h.repo.ListByIDs(r.Context(), allowedIDs, p.limit, p.offset)
+	}
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_advertisers_failed", "Failed to list advertisers")
 		return
@@ -155,7 +213,16 @@ func (h *AdvertiserHandler) SearchAdvertisers(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	advertisers, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset)
+	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
+	allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
+
+	var advertisers []models.Advertiser
+	var total int
+	if permissionGlobal {
+		advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
+	} else {
+		advertisers, total, err = h.repo.SearchByIDs(r.Context(), allowedIDs, query, p.limit, p.offset)
+	}
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_advertisers_failed", "Failed to search advertisers")
 		return

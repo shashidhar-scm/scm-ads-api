@@ -22,6 +22,9 @@ func (noopCreativeRepo) ListAll(ctx context.Context, limit int, offset int) ([]*
 	return []*models.Creative{}, nil
 }
 func (noopCreativeRepo) CountAll(ctx context.Context) (int, error) { return 0, nil }
+func (noopCreativeRepo) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Creative, int, error) {
+	return []*models.Creative{}, 0, nil
+}
 func (noopCreativeRepo) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
 	return []*models.Creative{}, nil
 }
@@ -48,6 +51,9 @@ func (noopCampaignRepo) Count(ctx context.Context, filter interfaces.CampaignFil
 func (noopCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
 }
+func (noopCampaignRepo) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Campaign, int, error) {
+	return []*models.Campaign{}, 0, nil
+}
 func (noopCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
 	return 0, nil
 }
@@ -56,6 +62,12 @@ func (noopCampaignRepo) CompleteActiveEndedBefore(ctx context.Context, now time.
 }
 func (noopCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
 func (noopCampaignRepo) Delete(ctx context.Context, id string) error { return nil }
+func (noopCampaignRepo) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
+	return []*models.Campaign{}, nil
+}
+func (noopCampaignRepo) ListByEndDate(ctx context.Context, endDate time.Time) ([]*models.Campaign, error) {
+	return []*models.Campaign{}, nil
+}
 
 func TestUploadCreativeMissingCampaignIDReturnsJSON(t *testing.T) {
 	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{})

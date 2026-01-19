@@ -9,6 +9,8 @@ import (
 
 	"scm/internal/interfaces"
 	"scm/internal/models"
+
+	"github.com/lib/pq"
 )
 
 type advertiserRepository struct {
@@ -88,6 +90,35 @@ func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.
 	return &advertiser, nil
 }
 
+func (r *advertiserRepository) GetByIDInSet(ctx context.Context, id string, allowedIDs []string) (*models.Advertiser, error) {
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE id = $1
+		  AND id = ANY($2::uuid[])
+	`
+
+	var advertiser models.Advertiser
+	var createdBy sql.NullString
+	ids := pq.StringArray(allowedIDs)
+	if err := r.db.QueryRowContext(ctx, query, id, ids).Scan(
+		&advertiser.ID,
+		&advertiser.Name,
+		&advertiser.Email,
+		&createdBy,
+		&advertiser.CreatedAt,
+		&advertiser.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if createdBy.Valid {
+		advertiser.CreatedBy = createdBy.String
+	} else {
+		advertiser.CreatedBy = ""
+	}
+	return &advertiser, nil
+}
+
 func (r *advertiserRepository) List(ctx context.Context, limit int, offset int) ([]models.Advertiser, error) {
 	query := `
 		SELECT id, name, email, created_by, created_at, updated_at
@@ -145,10 +176,75 @@ func (r *advertiserRepository) List(ctx context.Context, limit int, offset int) 
 	return advertisers, nil
 }
 
+func (r *advertiserRepository) ListByIDs(ctx context.Context, allowedIDs []string, limit int, offset int) ([]models.Advertiser, error) {
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE id = ANY($1::uuid[])
+		ORDER BY name
+	`
+	args := []any{pq.StringArray(allowedIDs)}
+	argPos := 2
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		log.Printf("Error listing scoped advertisers: %v", err)
+		return nil, fmt.Errorf("failed to list advertisers: %w", err)
+	}
+	defer rows.Close()
+
+	var advertisers []models.Advertiser
+	for rows.Next() {
+		var adv models.Advertiser
+		var createdBy sql.NullString
+		if err := rows.Scan(
+			&adv.ID,
+			&adv.Name,
+			&adv.Email,
+			&createdBy,
+			&adv.CreatedAt,
+			&adv.UpdatedAt,
+		); err != nil {
+			log.Printf("Error scanning advertiser: %v", err)
+			return nil, fmt.Errorf("failed to scan advertiser: %w", err)
+		}
+		if createdBy.Valid {
+			adv.CreatedBy = createdBy.String
+		} else {
+			adv.CreatedBy = ""
+		}
+		advertisers = append(advertisers, adv)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("Error iterating advertisers: %v", err)
+		return nil, fmt.Errorf("error iterating advertisers: %w", err)
+	}
+	return advertisers, nil
+}
+
 func (r *advertiserRepository) Count(ctx context.Context) (int, error) {
 	query := `SELECT COUNT(*) FROM advertisers`
 	var total int
 	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+		log.Printf("Error counting advertisers: %v", err)
+		return 0, fmt.Errorf("failed to count advertisers: %w", err)
+	}
+	return total, nil
+}
+
+func (r *advertiserRepository) CountByIDs(ctx context.Context, allowedIDs []string) (int, error) {
+	query := `SELECT COUNT(*) FROM advertisers WHERE id = ANY($1::uuid[])`
+	var total int
+	if err := r.db.QueryRowContext(ctx, query, pq.StringArray(allowedIDs)).Scan(&total); err != nil {
 		log.Printf("Error counting advertisers: %v", err)
 		return 0, fmt.Errorf("failed to count advertisers: %w", err)
 	}
@@ -219,6 +315,70 @@ func (r *advertiserRepository) Search(ctx context.Context, term string, limit in
 		return nil, 0, fmt.Errorf("error iterating advertisers: %w", err)
 	}
 
+	return advertisers, total, nil
+}
+
+func (r *advertiserRepository) SearchByIDs(ctx context.Context, allowedIDs []string, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM advertisers
+		WHERE id = ANY($1::uuid[])
+		  AND (LOWER(name) LIKE $2 OR LOWER(email) LIKE $2)
+	`
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, pq.StringArray(allowedIDs), likeTerm).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count advertisers: %w", err)
+	}
+
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE id = ANY($1::uuid[])
+		  AND (LOWER(name) LIKE $2 OR LOWER(email) LIKE $2)
+		ORDER BY name
+	`
+	args := []any{pq.StringArray(allowedIDs), likeTerm}
+	argPos := 3
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search advertisers: %w", err)
+	}
+	defer rows.Close()
+
+	var advertisers []models.Advertiser
+	for rows.Next() {
+		var adv models.Advertiser
+		var createdBy sql.NullString
+		if err := rows.Scan(
+			&adv.ID,
+			&adv.Name,
+			&adv.Email,
+			&createdBy,
+			&adv.CreatedAt,
+			&adv.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan advertiser: %w", err)
+		}
+		if createdBy.Valid {
+			adv.CreatedBy = createdBy.String
+		}
+		advertisers = append(advertisers, adv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating advertisers: %w", err)
+	}
 	return advertisers, total, nil
 }
 

@@ -156,6 +156,8 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.JWTAuth(cfg.JWTSecret))
 
+            RegisterRBACRoutes(r, db)
+
             // Register campaign routes
 			RegisterCampaignRoutes(r, db, cfg.PopAPIBaseURL)
             // Register advertiser routes

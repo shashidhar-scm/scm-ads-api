@@ -77,6 +77,7 @@ func parseFormList(r *http.Request, key string) []string {
 // @Security BearerAuth
 // @Accept multipart/form-data
 // @Produce json
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param campaign_id formData string true "Campaign ID"
 // @Param selected_days formData string true "Selected days (comma separated or repeated)"
 // @Param time_slots formData string true "Time slots (comma separated or repeated)"
@@ -231,6 +232,7 @@ func getFileType(header *multipart.FileHeader) models.CreativeType {
 // @Security BearerAuth
 // @Produce json
 // @Param campaignID path string true "Campaign ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {array} models.Creative
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -310,7 +312,9 @@ func (h *CreativeHandler) SearchCreatives(w http.ResponseWriter, r *http.Request
 // @Summary List creatives
 // @Security BearerAuth
 // @Produce json
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {array} models.Creative
+// @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/creatives/ [get]
 func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) {
@@ -414,6 +418,7 @@ func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.R
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Creative ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} models.Creative
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
@@ -448,11 +453,11 @@ func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
 // @Summary Update creative
 // @Security BearerAuth
 // @Accept json
-// @Accept multipart/form-data
 // @Produce json
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param id path string true "Creative ID"
-// @Param body body models.UpdateCreativeRequest false "Update creative request (JSON)"
-// @Success 200 {object} map[string]interface{}
+// @Param body body models.UpdateCreativeRequest true "Update creative request"
+// @Success 200 {object} models.Creative
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -584,6 +589,7 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Creative ID"
+// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
