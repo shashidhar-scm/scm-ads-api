@@ -24,6 +24,8 @@ type Campaign struct {
     Spent        float64       `json:"spent"`
     ImpressionsBased bool      `json:"impressions_based"`
     LifetimeImpressions *int64  `json:"lifetime_impressions,omitempty"`
+    TotalImpressions int64      `json:"total_impressions"`
+    ServedImpressions int64     `json:"served_impressions"`
     Clicks       int           `json:"clicks"`
     CTR          float64       `json:"ctr"`
     AdvertiserID string        `json:"advertiser_id" validate:"required,uuid4"`
@@ -55,4 +57,5 @@ type CampaignSummary struct {
     ActiveCampaignCount int     `json:"active_campaign_count"`
     TotalBudget         float64 `json:"total_budget"`
     TotalImpression     int64   `json:"total_impression"`
+    ServedImpression    int64   `json:"served_impression"`
 }

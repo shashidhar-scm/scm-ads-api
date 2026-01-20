@@ -282,6 +282,7 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 		"active_campaign_count": summary.ActiveCampaignCount,
 		"total_budget":          summary.TotalBudget,
 		"total_impression":      summary.TotalImpression,
+		"served_impression":     summary.ServedImpression,
 		"campaigns":             campaigns,
 	}
 	writePaginatedResponse(w, http.StatusOK, data, p.page, p.pageSize, total)

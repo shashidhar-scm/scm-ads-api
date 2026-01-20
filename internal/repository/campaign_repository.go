@@ -60,11 +60,21 @@ func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campai
 func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Campaign, error) {
     query := `
         SELECT 
-            id, name, status, cities, start_date, end_date, budget,
-            spent, clicks, ctr, advertiser_id, impressions_based,
-            created_at, updated_at
-        FROM campaigns 
-        WHERE id = $1
+            c.id, c.name, c.status, c.cities, c.start_date, c.end_date, c.budget,
+            c.spent, c.clicks, c.ctr, c.advertiser_id, c.impressions_based,
+            COALESCE(ci.total_impressions, 0) AS total_impressions,
+            COALESCE(ci.served_impressions, 0) AS served_impressions,
+            c.created_at, c.updated_at
+        FROM campaigns c
+        LEFT JOIN (
+            SELECT
+                campaign_id,
+                COALESCE(SUM(impression_count), 0) AS total_impressions,
+                COALESCE(SUM(impressions_served), 0) AS served_impressions
+            FROM creatives
+            GROUP BY campaign_id
+        ) ci ON ci.campaign_id = c.id
+        WHERE c.id = $1
     `
     
     var campaign models.Campaign
@@ -81,6 +91,8 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
         &campaign.CTR,
         &campaign.AdvertiserID,
         &campaign.ImpressionsBased,
+        &campaign.TotalImpressions,
+        &campaign.ServedImpressions,
         &campaign.CreatedAt,
         &campaign.UpdatedAt,
     )
@@ -102,8 +114,17 @@ func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.Camp
         SELECT
             COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_campaign_count,
             COALESCE(SUM(budget), 0) AS total_budget,
-            0 AS total_impression
+            COALESCE(SUM(ci.total_impressions), 0) AS total_impression,
+            COALESCE(SUM(ci.served_impressions), 0) AS served_impression
         FROM campaigns c
+        LEFT JOIN (
+            SELECT
+                campaign_id,
+                COALESCE(SUM(impression_count), 0) AS total_impressions,
+                COALESCE(SUM(impressions_served), 0) AS served_impressions
+            FROM creatives
+            GROUP BY campaign_id
+        ) ci ON ci.campaign_id = c.id
         WHERE 1=1
     `
 
@@ -150,6 +171,7 @@ func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.Camp
         &summary.ActiveCampaignCount,
         &summary.TotalBudget,
         &summary.TotalImpression,
+        &summary.ServedImpression,
     ); err != nil {
         return nil, err
     }
@@ -301,10 +323,20 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
 
     query := `
         SELECT
-            id, name, status, cities, start_date, end_date, budget,
-            spent, clicks, ctr, advertiser_id, impressions_based,
-            created_at, updated_at
+            c.id, c.name, c.status, c.cities, c.start_date, c.end_date, c.budget,
+            c.spent, c.clicks, c.ctr, c.advertiser_id, c.impressions_based,
+            COALESCE(ci.total_impressions, 0) AS total_impressions,
+            COALESCE(ci.served_impressions, 0) AS served_impressions,
+            c.created_at, c.updated_at
         FROM campaigns c
+        LEFT JOIN (
+            SELECT
+                campaign_id,
+                COALESCE(SUM(impression_count), 0) AS total_impressions,
+                COALESCE(SUM(impressions_served), 0) AS served_impressions
+            FROM creatives
+            GROUP BY campaign_id
+        ) ci ON ci.campaign_id = c.id
         WHERE (
             LOWER(c.name) LIKE $1
            OR LOWER(COALESCE(array_to_string(c.cities, ' '), '' )) LIKE $1
@@ -348,6 +380,8 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
             &campaign.CTR,
             &campaign.AdvertiserID,
             &campaign.ImpressionsBased,
+            &campaign.TotalImpressions,
+            &campaign.ServedImpressions,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         ); err != nil {
@@ -366,10 +400,20 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
 func (r *campaignRepository) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
     query := `
         SELECT 
-            id, name, status, cities, start_date, end_date, budget,
-            spent, clicks, ctr, advertiser_id, impressions_based,
-            created_at, updated_at
+            c.id, c.name, c.status, c.cities, c.start_date, c.end_date, c.budget,
+            c.spent, c.clicks, c.ctr, c.advertiser_id, c.impressions_based,
+            COALESCE(ci.total_impressions, 0) AS total_impressions,
+            COALESCE(ci.served_impressions, 0) AS served_impressions,
+            c.created_at, c.updated_at
         FROM campaigns c
+        LEFT JOIN (
+            SELECT
+                campaign_id,
+                COALESCE(SUM(impression_count), 0) AS total_impressions,
+                COALESCE(SUM(impressions_served), 0) AS served_impressions
+            FROM creatives
+            GROUP BY campaign_id
+        ) ci ON ci.campaign_id = c.id
         WHERE 1=1
     `
 
@@ -447,6 +491,8 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
             &campaign.CTR,
             &campaign.AdvertiserID,
             &campaign.ImpressionsBased,
+            &campaign.TotalImpressions,
+            &campaign.ServedImpressions,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         )
@@ -462,11 +508,21 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
 func (r *campaignRepository) ListByEndDate(ctx context.Context, endDate time.Time) ([]*models.Campaign, error) {
     query := `
         SELECT 
-            id, name, status, cities, start_date, end_date, budget,
-            spent, clicks, ctr, advertiser_id, impressions_based,
-            created_at, updated_at
-        FROM campaigns
-        WHERE DATE(end_date) = DATE($1)
+            c.id, c.name, c.status, c.cities, c.start_date, c.end_date, c.budget,
+            c.spent, c.clicks, c.ctr, c.advertiser_id, c.impressions_based,
+            COALESCE(ci.total_impressions, 0) AS total_impressions,
+            COALESCE(ci.served_impressions, 0) AS served_impressions,
+            c.created_at, c.updated_at
+        FROM campaigns c
+        LEFT JOIN (
+            SELECT
+                campaign_id,
+                COALESCE(SUM(impression_count), 0) AS total_impressions,
+                COALESCE(SUM(impressions_served), 0) AS served_impressions
+            FROM creatives
+            GROUP BY campaign_id
+        ) ci ON ci.campaign_id = c.id
+        WHERE DATE(c.end_date) = DATE($1)
     `
 
     rows, err := r.db.QueryContext(ctx, query, endDate)
@@ -491,6 +547,8 @@ func (r *campaignRepository) ListByEndDate(ctx context.Context, endDate time.Tim
             &campaign.CTR,
             &campaign.AdvertiserID,
             &campaign.ImpressionsBased,
+            &campaign.TotalImpressions,
+            &campaign.ServedImpressions,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         )
@@ -590,11 +648,21 @@ func (r *campaignRepository) Delete(ctx context.Context, id string) error {
 func (r *campaignRepository) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
     query := `
         SELECT 
-            id, name, status, cities, start_date, end_date, budget,
-            spent, clicks, ctr, advertiser_id, impressions_based,
-            created_at, updated_at
-        FROM campaigns
-        WHERE DATE(start_date) = DATE($1)
+            c.id, c.name, c.status, c.cities, c.start_date, c.end_date, c.budget,
+            c.spent, c.clicks, c.ctr, c.advertiser_id, c.impressions_based,
+            COALESCE(ci.total_impressions, 0) AS total_impressions,
+            COALESCE(ci.served_impressions, 0) AS served_impressions,
+            c.created_at, c.updated_at
+        FROM campaigns c
+        LEFT JOIN (
+            SELECT
+                campaign_id,
+                COALESCE(SUM(impression_count), 0) AS total_impressions,
+                COALESCE(SUM(impressions_served), 0) AS served_impressions
+            FROM creatives
+            GROUP BY campaign_id
+        ) ci ON ci.campaign_id = c.id
+        WHERE DATE(c.start_date) = DATE($1)
     `
 
     rows, err := r.db.QueryContext(ctx, query, startDate)
@@ -619,6 +687,8 @@ func (r *campaignRepository) ListByStartDate(ctx context.Context, startDate time
             &campaign.CTR,
             &campaign.AdvertiserID,
             &campaign.ImpressionsBased,
+            &campaign.TotalImpressions,
+            &campaign.ServedImpressions,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         )
