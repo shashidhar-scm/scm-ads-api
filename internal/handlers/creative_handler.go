@@ -8,6 +8,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,7 +113,8 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         return
     }
 
-    if _, err := h.campaignRepo.GetByID(r.Context(), campaignID); err != nil {
+    campaign, err := h.campaignRepo.GetByID(r.Context(), campaignID)
+    if err != nil {
         if err == sql.ErrNoRows {
             writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
             return
@@ -119,6 +122,21 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         log.Printf("Failed to validate campaign %s: %v", campaignID, err)
         writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
         return
+    }
+
+    var impressionCount *int64
+    if campaign != nil && campaign.ImpressionsBased {
+        raw := strings.TrimSpace(r.FormValue("impression_count"))
+        if raw == "" {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count is required for impressions-based campaigns")
+            return
+        }
+        v, err := strconv.ParseInt(raw, 10, 64)
+        if err != nil || v <= 0 {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count must be a positive integer")
+            return
+        }
+        impressionCount = &v
     }
 
     selectedDays := parseFormList(r, "selected_days")
@@ -134,6 +152,16 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     }
 
     devices := parseFormList(r, "devices")
+    rotationGroupName := strings.TrimSpace(r.FormValue("rotation_group_name"))
+    var rotationGroupID *string
+    if rotationGroupName != "" {
+        id, err := h.repo.EnsureRotationGroup(r.Context(), campaignID, rotationGroupName, selectedDays, timeSlots)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
+            return
+        }
+        rotationGroupID = &id
+    }
 
     // 2. Get the files from the form
     files := r.MultipartForm.File["files"]
@@ -161,6 +189,8 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
             Name:         fileHeader.Filename,
             Type:         getFileType(fileHeader),
             Size:         fileHeader.Size,
+            ImpressionCount: impressionCount,
+            RotationGroupID: rotationGroupID,
             CampaignID:   campaignID,
             SelectedDays: selectedDays,
             TimeSlots:    timeSlots,
@@ -371,13 +401,6 @@ func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.R
 
 	now := time.Now().UTC()
 
-	total, err := h.repo.CountByDevice(r.Context(), device, activeNow, now)
-	if err != nil {
-		log.Printf("Failed to count creatives by device: %v", err)
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
-		return
-	}
-
 	creatives, err := h.repo.ListByDevice(r.Context(), device, activeNow, now, p.limit, p.offset)
 	if err != nil {
 		log.Printf("Failed to list creatives by device: %v", err)
@@ -394,22 +417,62 @@ func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.R
 		Creatives  []*models.Creative `json:"creatives"`
 	}
 
-	groups := make([]creativesByCampaign, 0)
-	indexByCampaignID := make(map[string]int)
+	byCampaign := make(map[string][]*models.Creative)
 	for _, c := range creatives {
 		if c == nil {
 			continue
 		}
-		idx, ok := indexByCampaignID[c.CampaignID]
-		if !ok {
-			idx = len(groups)
-			indexByCampaignID[c.CampaignID] = idx
-			groups = append(groups, creativesByCampaign{CampaignID: c.CampaignID, Creatives: []*models.Creative{}})
-		}
-		groups[idx].Creatives = append(groups[idx].Creatives, c)
+		byCampaign[c.CampaignID] = append(byCampaign[c.CampaignID], c)
 	}
 
-	writePaginatedResponse(w, http.StatusOK, groups, p.page, p.pageSize, total)
+	groups := make([]creativesByCampaign, 0, len(byCampaign))
+	for campaignID, cs := range byCampaign {
+		nonRotational := make([]*models.Creative, 0)
+		rotational := make(map[string][]*models.Creative)
+		for _, c := range cs {
+			if c == nil {
+				continue
+			}
+			if c.RotationGroupID == nil || strings.TrimSpace(*c.RotationGroupID) == "" {
+				nonRotational = append(nonRotational, c)
+				continue
+			}
+			rotational[*c.RotationGroupID] = append(rotational[*c.RotationGroupID], c)
+		}
+
+		selected := make([]*models.Creative, 0, len(nonRotational)+len(rotational))
+		selected = append(selected, nonRotational...)
+
+		for rgid, members := range rotational {
+			if len(members) == 0 {
+				continue
+			}
+			sort.SliceStable(members, func(i, j int) bool {
+				if members[i].UploadedAt.Equal(members[j].UploadedAt) {
+					return members[i].ID < members[j].ID
+				}
+				return members[i].UploadedAt.Before(members[j].UploadedAt)
+			})
+			candidateIDs := make([]string, 0, len(members))
+			for _, m := range members {
+				candidateIDs = append(candidateIDs, m.ID)
+			}
+			nextID, err := h.repo.PickNextRotationalCreative(r.Context(), device, campaignID, rgid, candidateIDs)
+			if err != nil {
+				continue
+			}
+			for _, m := range members {
+				if m.ID == nextID {
+					selected = append(selected, m)
+					break
+				}
+			}
+		}
+
+		groups = append(groups, creativesByCampaign{CampaignID: campaignID, Creatives: selected})
+	}
+
+	writePaginatedResponse(w, http.StatusOK, groups, p.page, p.pageSize, len(groups))
 }
 
 // GetCreative handles GET /creatives/{id}
@@ -482,6 +545,15 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
             req.Name = &name
         }
 
+        if raw := strings.TrimSpace(r.FormValue("impression_count")); raw != "" {
+            if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+                req.ImpressionCount = &v
+            } else {
+                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count must be a valid integer")
+                return
+            }
+        }
+
         if r.MultipartForm != nil {
             if _, ok := r.MultipartForm.Value["selected_days"]; ok {
                 v := parseFormList(r, "selected_days")
@@ -494,6 +566,13 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
             if _, ok := r.MultipartForm.Value["devices"]; ok {
                 v := parseFormList(r, "devices")
                 req.Devices = &v
+            }
+            if _, ok := r.MultipartForm.Value["rotation_group_name"]; ok {
+                v := strings.TrimSpace(r.FormValue("rotation_group_name"))
+                req.RotationGroupName = &v
+                if v == "" {
+                    req.ClearRotationGroup = true
+                }
             }
         }
 
@@ -546,6 +625,32 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
             return
         }
 
+        if req.RotationGroupName != nil && strings.TrimSpace(*req.RotationGroupName) != "" {
+            existing, err := h.repo.GetByID(r.Context(), id)
+            if err != nil {
+                if err == sql.ErrNoRows {
+                    writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+                    return
+                }
+                writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+                return
+            }
+            days := existing.SelectedDays
+            slots := existing.TimeSlots
+            if req.SelectedDays != nil {
+                days = *req.SelectedDays
+            }
+            if req.TimeSlots != nil {
+                slots = *req.TimeSlots
+            }
+            gid, err := h.repo.EnsureRotationGroup(r.Context(), existing.CampaignID, *req.RotationGroupName, days, slots)
+            if err != nil {
+                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
+                return
+            }
+            req.RotationGroupID = &gid
+        }
+
         if err := h.repo.Update(r.Context(), id, &req); err != nil {
             if err == sql.ErrNoRows {
                 writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
@@ -566,9 +671,60 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
         return
     }
 
+    if req.RotationGroupName != nil && strings.TrimSpace(*req.RotationGroupName) == "" {
+        req.ClearRotationGroup = true
+    }
+
     if err := h.validator.Struct(req); err != nil {
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
         return
+    }
+
+    existing, err := h.repo.GetByID(r.Context(), id)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+            return
+        }
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+        return
+    }
+
+    if h.campaignRepo != nil {
+        campaign, err := h.campaignRepo.GetByID(r.Context(), existing.CampaignID)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+            return
+        }
+        finalImpressionCount := existing.ImpressionCount
+        if req.ImpressionCount != nil {
+            finalImpressionCount = req.ImpressionCount
+        }
+        if campaign != nil && campaign.ImpressionsBased {
+            if finalImpressionCount == nil || *finalImpressionCount <= 0 {
+                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count is required for impressions-based campaigns")
+                return
+            }
+        }
+    }
+
+    if req.ClearRotationGroup {
+        req.RotationGroupID = nil
+    } else if req.RotationGroupName != nil && strings.TrimSpace(*req.RotationGroupName) != "" {
+        days := existing.SelectedDays
+        slots := existing.TimeSlots
+        if req.SelectedDays != nil {
+            days = *req.SelectedDays
+        }
+        if req.TimeSlots != nil {
+            slots = *req.TimeSlots
+        }
+        gid, err := h.repo.EnsureRotationGroup(r.Context(), existing.CampaignID, *req.RotationGroupName, days, slots)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
+            return
+        }
+        req.RotationGroupID = &gid
     }
 
     if err := h.repo.Update(r.Context(), id, &req); err != nil {

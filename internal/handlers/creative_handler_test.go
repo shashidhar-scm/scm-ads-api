@@ -38,6 +38,17 @@ func (noopCreativeRepo) CountByDevice(ctx context.Context, device string, active
 func (noopCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error { return nil }
 func (noopCreativeRepo) Delete(ctx context.Context, id string) error { return nil }
 
+func (noopCreativeRepo) EnsureRotationGroup(ctx context.Context, campaignID string, name string, selectedDays []string, timeSlots []string) (string, error) {
+	return "", nil
+}
+
+func (noopCreativeRepo) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, rotationGroupID string, candidateCreativeIDs []string) (string, error) {
+	if len(candidateCreativeIDs) == 0 {
+		return "", nil
+	}
+	return candidateCreativeIDs[0], nil
+}
+
 type noopCampaignRepo struct{}
 
 func (noopCampaignRepo) Create(ctx context.Context, campaign *models.Campaign) error { return nil }

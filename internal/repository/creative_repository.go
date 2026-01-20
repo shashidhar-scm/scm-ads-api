@@ -23,6 +23,8 @@ type CreativeRepository interface {
 	CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error)
 	Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error
 	Delete(ctx context.Context, id string) error
+	EnsureRotationGroup(ctx context.Context, campaignID string, name string, selectedDays []string, timeSlots []string) (string, error)
+	PickNextRotationalCreative(ctx context.Context, device string, campaignID string, rotationGroupID string, candidateCreativeIDs []string) (string, error)
 }
 
 type creativeRepository struct {
@@ -36,11 +38,16 @@ func NewCreativeRepository(db *sql.DB) CreativeRepository {
 func (r *creativeRepository) Create(ctx context.Context, creative *models.Creative) error {
     query := `
         INSERT INTO creatives (
-            id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING uploaded_at
     `
     
+    var rotationGroupID any
+    if creative.RotationGroupID != nil && strings.TrimSpace(*creative.RotationGroupID) != "" {
+        rotationGroupID = *creative.RotationGroupID
+    }
+
     err := r.db.QueryRowContext(
         ctx,
         query,
@@ -50,6 +57,9 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
         creative.URL,
         creative.FilePath,
         creative.Size,
+        creative.ImpressionCount,
+        creative.ImpressionsServed,
+        rotationGroupID,
         creative.CampaignID,
         pq.Array(creative.SelectedDays),
         pq.Array(creative.TimeSlots),
@@ -62,13 +72,14 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
 
 func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Creative, error) {
     query := `
-        SELECT id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
+        SELECT id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
         FROM creatives
         WHERE id = $1
     `
     
     var creative models.Creative
     var impressionCount sql.NullInt64
+    var rotationGroupID sql.NullString
     err := r.db.QueryRowContext(ctx, query, id).Scan(
         &creative.ID,
         &creative.Name,
@@ -78,6 +89,7 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         &creative.Size,
         &impressionCount,
         &creative.ImpressionsServed,
+        &rotationGroupID,
         &creative.CampaignID,
         pq.Array(&creative.SelectedDays),
         pq.Array(&creative.TimeSlots),
@@ -96,13 +108,17 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         v := impressionCount.Int64
         creative.ImpressionCount = &v
     }
+	if rotationGroupID.Valid {
+		v := rotationGroupID.String
+		creative.RotationGroupID = &v
+	}
     return &creative, nil
 }
 
 func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		ORDER BY uploaded_at DESC
 	`
@@ -184,13 +200,13 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		WHERE LOWER(name) LIKE $1
 			OR LOWER(type::text) LIKE $1
-			OR LOWER(COALESCE(array_to_string(selected_days, ' '), '')) LIKE $1
-			OR LOWER(COALESCE(array_to_string(time_slots, ' '), '')) LIKE $1
-			OR LOWER(COALESCE(array_to_string(devices, ' '), '')) LIKE $1
+			OR EXISTS (SELECT 1 FROM unnest(selected_days) d WHERE LOWER(d) LIKE $1)
+			OR EXISTS (SELECT 1 FROM unnest(time_slots) t WHERE LOWER(t) LIKE $1)
+			OR EXISTS (SELECT 1 FROM unnest(devices) dv WHERE LOWER(dv) LIKE $1)
 		ORDER BY uploaded_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -205,6 +221,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 	for rows.Next() {
 		var creative models.Creative
 		var impressionCount sql.NullInt64
+		var rotationGroupID sql.NullString
 		if err := rows.Scan(
 			&creative.ID,
 			&creative.Name,
@@ -214,17 +231,22 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 			&creative.Size,
 			&impressionCount,
 			&creative.ImpressionsServed,
+			&rotationGroupID,
 			&creative.CampaignID,
 			pq.Array(&creative.SelectedDays),
 			pq.Array(&creative.TimeSlots),
 			pq.Array(&creative.Devices),
 			&creative.UploadedAt,
 		); err != nil {
-			return nil, 0, fmt.Errorf("scan creative: %w", err)
+			return nil, 0, err
 		}
 		if impressionCount.Valid {
 			v := impressionCount.Int64
 			creative.ImpressionCount = &v
+		}
+		if rotationGroupID.Valid {
+			v := rotationGroupID.String
+			creative.RotationGroupID = &v
 		}
 		creatives = append(creatives, &creative)
 	}
@@ -239,7 +261,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		WHERE campaign_id = $1
 		ORDER BY uploaded_at DESC
@@ -307,7 +329,7 @@ func (r *creativeRepository) CountByCampaign(ctx context.Context, campaignID str
 func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.rotation_group_id, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
 		FROM creatives cr
 		JOIN campaigns ca ON ca.id = cr.campaign_id
 		WHERE EXISTS (
@@ -320,7 +342,8 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 			ca.impressions_based = false
 			OR (
 				ca.impressions_based = true
-				AND COALESCE(cr.impression_count, 0) > COALESCE(cr.impressions_served, 0)
+				AND cr.impression_count IS NOT NULL
+				AND cr.impression_count > COALESCE(cr.impressions_served, 0)
 			)
 		)
 	`
@@ -381,6 +404,7 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 	for rows.Next() {
 		var creative models.Creative
 		var impressionCount sql.NullInt64
+		var rotationGroupID sql.NullString
 		if err := rows.Scan(
 			&creative.ID,
 			&creative.Name,
@@ -390,6 +414,7 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 			&creative.Size,
 			&impressionCount,
 			&creative.ImpressionsServed,
+			&rotationGroupID,
 			&creative.CampaignID,
 			pq.Array(&creative.SelectedDays),
 			pq.Array(&creative.TimeSlots),
@@ -401,6 +426,10 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		if impressionCount.Valid {
 			v := impressionCount.Int64
 			creative.ImpressionCount = &v
+		}
+		if rotationGroupID.Valid {
+			v := rotationGroupID.String
+			creative.RotationGroupID = &v
 		}
 		creatives = append(creatives, &creative)
 	}
@@ -422,7 +451,8 @@ func (r *creativeRepository) CountByDevice(ctx context.Context, device string, a
 			ca.impressions_based = false
 			OR (
 				ca.impressions_based = true
-				AND COALESCE(cr.impression_count, 0) > COALESCE(cr.impressions_served, 0)
+				AND cr.impression_count IS NOT NULL
+				AND cr.impression_count > COALESCE(cr.impressions_served, 0)
 			)
 		)
 	`
@@ -470,12 +500,22 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 			file_path = COALESCE($4, file_path),
 			size = COALESCE($5, size),
 			impression_count = COALESCE($6, impression_count),
-			selected_days = COALESCE($7::text[], selected_days),
-			time_slots = COALESCE($8::text[], time_slots),
-			devices = COALESCE($9::text[], devices)
-		WHERE id = $10
+			rotation_group_id = CASE
+				WHEN $7::boolean = true THEN NULL
+				ELSE COALESCE($8::uuid, rotation_group_id)
+			END,
+			selected_days = COALESCE($9::text[], selected_days),
+			time_slots = COALESCE($10::text[], time_slots),
+			devices = COALESCE($11::text[], devices)
+		WHERE id = $12
 		RETURNING id
 	`
+
+	clearRotation := req.ClearRotationGroup
+	var rotationGroupID any
+	if req.RotationGroupID != nil && strings.TrimSpace(*req.RotationGroupID) != "" {
+		rotationGroupID = *req.RotationGroupID
+	}
 
 	var selectedDays any
 	if req.SelectedDays != nil {
@@ -499,6 +539,8 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 		req.FilePath,
 		req.Size,
 		req.ImpressionCount,
+		clearRotation,
+		rotationGroupID,
 		selectedDays,
 		timeSlots,
 		devices,
@@ -507,6 +549,148 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 		return err
 	}
 	return nil
+}
+
+func (r *creativeRepository) EnsureRotationGroup(ctx context.Context, campaignID string, name string, selectedDays []string, timeSlots []string) (string, error) {
+	if strings.TrimSpace(campaignID) == "" {
+		return "", fmt.Errorf("campaignID is required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("rotation_group_name is required")
+	}
+	if len(selectedDays) == 0 {
+		return "", fmt.Errorf("selected_days is required for rotation group")
+	}
+	if len(timeSlots) == 0 {
+		return "", fmt.Errorf("time_slots is required for rotation group")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO rotation_groups (campaign_id, name, selected_days, time_slots)
+		VALUES ($1, $2, $3::text[], $4::text[])
+		ON CONFLICT (campaign_id, name) DO NOTHING
+	`, campaignID, name, pq.Array(selectedDays), pq.Array(timeSlots))
+	if err != nil {
+		return "", err
+	}
+
+	var id string
+	var existingDays []string
+	var existingSlots []string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, selected_days, time_slots
+		FROM rotation_groups
+		WHERE campaign_id = $1 AND name = $2
+	`, campaignID, name).Scan(&id, pq.Array(&existingDays), pq.Array(&existingSlots)); err != nil {
+		return "", err
+	}
+
+	if !equalStringSlices(existingDays, selectedDays) || !equalStringSlices(existingSlots, timeSlots) {
+		return "", fmt.Errorf("rotation_group_name already exists with different selected_days/time_slots")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, rotationGroupID string, candidateCreativeIDs []string) (string, error) {
+	device = strings.TrimSpace(device)
+	campaignID = strings.TrimSpace(campaignID)
+	rotationGroupID = strings.TrimSpace(rotationGroupID)
+	if device == "" || campaignID == "" || rotationGroupID == "" {
+		return "", fmt.Errorf("device, campaignID and rotationGroupID are required")
+	}
+	if len(candidateCreativeIDs) == 0 {
+		return "", fmt.Errorf("candidateCreativeIDs is required")
+	}
+
+	// Defensive: ensure deterministic order if caller passes same set in different order.
+	// We keep caller order by default but still need stable behavior if duplicates.
+	seen := make(map[string]struct{}, len(candidateCreativeIDs))
+	unique := make([]string, 0, len(candidateCreativeIDs))
+	for _, id := range candidateCreativeIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return "", fmt.Errorf("candidateCreativeIDs is required")
+	}
+	// Preserve the given order (order matters), but keep stable behavior when DB returns last_id not in list.
+	// (No sorting here.)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	var last sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT last_creative_id
+		FROM creative_rotation_state
+		WHERE device = $1 AND campaign_id = $2 AND rotation_group_id = $3
+		FOR UPDATE
+	`, device, campaignID, rotationGroupID).Scan(&last)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+
+	chosen := unique[0]
+	if last.Valid {
+		idx := -1
+		for i, id := range unique {
+			if id == last.String {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			chosen = unique[(idx+1)%len(unique)]
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO creative_rotation_state (device, campaign_id, rotation_group_id, last_creative_id, updated_at)
+		VALUES ($1, $2, $3, $4, NOW() AT TIME ZONE 'UTC')
+		ON CONFLICT (device, campaign_id, rotation_group_id)
+		DO UPDATE SET last_creative_id = EXCLUDED.last_creative_id, updated_at = EXCLUDED.updated_at
+	`, device, campaignID, rotationGroupID, chosen)
+	if err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return chosen, nil
+}
+
+func equalStringSlices(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *creativeRepository) Delete(ctx context.Context, id string) error {
