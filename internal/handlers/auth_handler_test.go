@@ -305,13 +305,13 @@ func TestLoginSuccess(t *testing.T) {
 			AddRow("u1", "a@b.com", "A", "a", "999", string(hash), time.Now().UTC()),
 	)
 
-	mock.ExpectQuery(`SELECT DISTINCT advertiser_id\s+FROM user_roles`).WithArgs("u1").WillReturnRows(
-		sqlmock.NewRows([]string{"advertiser_id"}),
-	)
-
-	mock.ExpectQuery(`SELECT ro\.name, ur\.advertiser_id\s+FROM user_roles ur`).WithArgs("u1").WillReturnRows(
+	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).WithArgs("u1").WillReturnRows(
 		sqlmock.NewRows([]string{"name", "advertiser_id"}).
 			AddRow("advertiser", nil),
+	)
+
+	mock.ExpectQuery(`SELECT DISTINCT advertiser_id\s+FROM user_roles`).WithArgs("u1").WillReturnRows(
+		sqlmock.NewRows([]string{"advertiser_id"}),
 	)
 
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))

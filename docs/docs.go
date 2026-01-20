@@ -663,7 +663,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search text (matches name, cities, start/end dates, budget, spent, impressions, clicks)",
+                        "description": "Search text (matches name, cities, start/end dates, budget, spent, clicks)",
                         "name": "query",
                         "in": "query",
                         "required": true
@@ -3663,8 +3663,8 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "impressions": {
-                    "type": "integer"
+                "impressions_based": {
+                    "type": "boolean"
                 },
                 "lifetime_impressions": {
                     "type": "integer"
@@ -3759,6 +3759,9 @@ const docTemplate = `{
                 "end_date": {
                     "type": "string"
                 },
+                "impressions_based": {
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -3814,6 +3817,12 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "impression_count": {
+                    "type": "integer"
+                },
+                "impressions_served": {
+                    "type": "integer"
                 },
                 "name": {
                     "type": "string"
@@ -3978,7 +3987,24 @@ const docTemplate = `{
                 "phone_number": {
                     "type": "string"
                 },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.LoginRole"
+                    }
+                },
                 "user_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.LoginRole": {
+            "type": "object",
+            "properties": {
+                "advertiser_id": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }
@@ -4283,6 +4309,9 @@ const docTemplate = `{
                 "end_date": {
                     "type": "string"
                 },
+                "impressions_based": {
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4309,6 +4338,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "impression_count": {
+                    "type": "integer"
                 },
                 "name": {
                     "type": "string",

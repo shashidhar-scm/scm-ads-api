@@ -62,12 +62,13 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
 
 func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Creative, error) {
     query := `
-        SELECT id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+        SELECT id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
         FROM creatives
         WHERE id = $1
     `
     
     var creative models.Creative
+    var impressionCount sql.NullInt64
     err := r.db.QueryRowContext(ctx, query, id).Scan(
         &creative.ID,
         &creative.Name,
@@ -75,6 +76,8 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         &creative.URL,
         &creative.FilePath,
         &creative.Size,
+        &impressionCount,
+        &creative.ImpressionsServed,
         &creative.CampaignID,
         pq.Array(&creative.SelectedDays),
         pq.Array(&creative.TimeSlots),
@@ -89,13 +92,17 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         return nil, err
     }
     
+    if impressionCount.Valid {
+        v := impressionCount.Int64
+        creative.ImpressionCount = &v
+    }
     return &creative, nil
 }
 
 func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		ORDER BY uploaded_at DESC
 	`
@@ -121,6 +128,7 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int)
     var creatives []*models.Creative
     for rows.Next() {
         var creative models.Creative
+        var impressionCount sql.NullInt64
         if err := rows.Scan(
             &creative.ID,
             &creative.Name,
@@ -128,6 +136,8 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int)
             &creative.URL,
             &creative.FilePath,
             &creative.Size,
+            &impressionCount,
+            &creative.ImpressionsServed,
             &creative.CampaignID,
             pq.Array(&creative.SelectedDays),
             pq.Array(&creative.TimeSlots),
@@ -135,6 +145,10 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int)
             &creative.UploadedAt,
         ); err != nil {
             return nil, err
+        }
+        if impressionCount.Valid {
+            v := impressionCount.Int64
+            creative.ImpressionCount = &v
         }
         creatives = append(creatives, &creative)
     }
@@ -170,7 +184,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		WHERE LOWER(name) LIKE $1
 			OR LOWER(type::text) LIKE $1
@@ -190,6 +204,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 	var creatives []*models.Creative
 	for rows.Next() {
 		var creative models.Creative
+		var impressionCount sql.NullInt64
 		if err := rows.Scan(
 			&creative.ID,
 			&creative.Name,
@@ -197,6 +212,8 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 			&creative.URL,
 			&creative.FilePath,
 			&creative.Size,
+			&impressionCount,
+			&creative.ImpressionsServed,
 			&creative.CampaignID,
 			pq.Array(&creative.SelectedDays),
 			pq.Array(&creative.TimeSlots),
@@ -204,6 +221,10 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 			&creative.UploadedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan creative: %w", err)
+		}
+		if impressionCount.Valid {
+			v := impressionCount.Int64
+			creative.ImpressionCount = &v
 		}
 		creatives = append(creatives, &creative)
 	}
@@ -218,7 +239,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		WHERE campaign_id = $1
 		ORDER BY uploaded_at DESC
@@ -242,10 +263,11 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
 		return nil, err
 	}
 	defer rows.Close()
-    
+	    
     var creatives []*models.Creative
     for rows.Next() {
         var creative models.Creative
+        var impressionCount sql.NullInt64
         if err := rows.Scan(
             &creative.ID,
             &creative.Name,
@@ -253,6 +275,8 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
             &creative.URL,
             &creative.FilePath,
             &creative.Size,
+            &impressionCount,
+            &creative.ImpressionsServed,
             &creative.CampaignID,
             pq.Array(&creative.SelectedDays),
             pq.Array(&creative.TimeSlots),
@@ -260,6 +284,10 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
             &creative.UploadedAt,
         ); err != nil {
             return nil, err
+        }
+        if impressionCount.Valid {
+            v := impressionCount.Int64
+            creative.ImpressionCount = &v
         }
         creatives = append(creatives, &creative)
     }
@@ -279,7 +307,7 @@ func (r *creativeRepository) CountByCampaign(ctx context.Context, campaignID str
 func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
 		FROM creatives cr
 		JOIN campaigns ca ON ca.id = cr.campaign_id
 		WHERE EXISTS (
@@ -288,6 +316,13 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 			WHERE lower(trim(dv)) = lower($1)
 		)
 		AND ca.status = 'active'
+		AND (
+			ca.impressions_based = false
+			OR (
+				ca.impressions_based = true
+				AND COALESCE(cr.impression_count, 0) > COALESCE(cr.impressions_served, 0)
+			)
+		)
 	`
 
 	args := []any{device}
@@ -345,6 +380,7 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 	var creatives []*models.Creative
 	for rows.Next() {
 		var creative models.Creative
+		var impressionCount sql.NullInt64
 		if err := rows.Scan(
 			&creative.ID,
 			&creative.Name,
@@ -352,6 +388,8 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 			&creative.URL,
 			&creative.FilePath,
 			&creative.Size,
+			&impressionCount,
+			&creative.ImpressionsServed,
 			&creative.CampaignID,
 			pq.Array(&creative.SelectedDays),
 			pq.Array(&creative.TimeSlots),
@@ -360,9 +398,12 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		); err != nil {
 			return nil, err
 		}
+		if impressionCount.Valid {
+			v := impressionCount.Int64
+			creative.ImpressionCount = &v
+		}
 		creatives = append(creatives, &creative)
 	}
-
 	return creatives, rows.Err()
 }
 
@@ -377,10 +418,16 @@ func (r *creativeRepository) CountByDevice(ctx context.Context, device string, a
 			WHERE lower(trim(dv)) = lower($1)
 		)
 		AND ca.status = 'active'
+		AND (
+			ca.impressions_based = false
+			OR (
+				ca.impressions_based = true
+				AND COALESCE(cr.impression_count, 0) > COALESCE(cr.impressions_served, 0)
+			)
+		)
 	`
 
 	args := []any{device}
-
 	if activeNow {
 		day := now.Weekday().String()
 		tm := now.Format("15:04")
@@ -415,48 +462,51 @@ func (r *creativeRepository) CountByDevice(ctx context.Context, device string, a
 }
 
 func (r *creativeRepository) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
-    query := `
-        UPDATE creatives
-        SET name = COALESCE($1, name),
-            type = COALESCE($2, type),
-            url = COALESCE($3, url),
-            file_path = COALESCE($4, file_path),
-            size = COALESCE($5, size),
-            selected_days = COALESCE($6::text[], selected_days),
-            time_slots = COALESCE($7::text[], time_slots),
-            devices = COALESCE($8::text[], devices)
-        WHERE id = $9
-        RETURNING id
-    `
+	query := `
+		UPDATE creatives
+		SET name = COALESCE($1, name),
+			type = COALESCE($2, type),
+			url = COALESCE($3, url),
+			file_path = COALESCE($4, file_path),
+			size = COALESCE($5, size),
+			impression_count = COALESCE($6, impression_count),
+			selected_days = COALESCE($7::text[], selected_days),
+			time_slots = COALESCE($8::text[], time_slots),
+			devices = COALESCE($9::text[], devices)
+		WHERE id = $10
+		RETURNING id
+	`
 
-    var selectedDays any
-    if req.SelectedDays != nil {
-        selectedDays = pq.Array(*req.SelectedDays)
-    }
-    var timeSlots any
-    if req.TimeSlots != nil {
-        timeSlots = pq.Array(*req.TimeSlots)
-    }
-    var devices any
-    if req.Devices != nil {
-        devices = pq.Array(*req.Devices)
-    }
+	var selectedDays any
+	if req.SelectedDays != nil {
+		selectedDays = pq.Array(*req.SelectedDays)
+	}
+	var timeSlots any
+	if req.TimeSlots != nil {
+		timeSlots = pq.Array(*req.TimeSlots)
+	}
+	var devices any
+	if req.Devices != nil {
+		devices = pq.Array(*req.Devices)
+	}
 
-    err := r.db.QueryRowContext(
-        ctx,
-        query,
-        req.Name,
-        req.Type,
-        req.URL,
-        req.FilePath,
-        req.Size,
-        selectedDays,
-        timeSlots,
-        devices,
-        id,
-    ).Scan(&id)
-    
-    return err
+	if err := r.db.QueryRowContext(
+		ctx,
+		query,
+		req.Name,
+		req.Type,
+		req.URL,
+		req.FilePath,
+		req.Size,
+		req.ImpressionCount,
+		selectedDays,
+		timeSlots,
+		devices,
+		id,
+	).Scan(&id); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *creativeRepository) Delete(ctx context.Context, id string) error {

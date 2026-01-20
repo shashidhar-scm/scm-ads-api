@@ -22,7 +22,7 @@ type Campaign struct {
     EndDate      time.Time     `json:"end_date" validate:"required,gtfield=StartDate"`
     Budget       float64       `json:"budget" validate:"required,gt=0"`
     Spent        float64       `json:"spent"`
-    Impressions  int           `json:"impressions"`
+    ImpressionsBased bool      `json:"impressions_based"`
     LifetimeImpressions *int64  `json:"lifetime_impressions,omitempty"`
     Clicks       int           `json:"clicks"`
     CTR          float64       `json:"ctr"`
@@ -38,6 +38,7 @@ type CreateCampaignRequest struct {
     EndDate      time.Time `json:"end_date" validate:"required,gtfield=StartDate"`
     Budget       float64   `json:"budget" validate:"required,gt=0"`
     AdvertiserID string    `json:"advertiser_id" validate:"required,uuid4"`
+    ImpressionsBased bool  `json:"impressions_based"`
 }
 
 type UpdateCampaignRequest struct {
@@ -47,6 +48,7 @@ type UpdateCampaignRequest struct {
     StartDate *time.Time `json:"start_date,omitempty"`
     EndDate   *time.Time `json:"end_date,omitempty" validate:"omitempty,gtfield=StartDate"`
     Budget    *float64   `json:"budget,omitempty" validate:"omitempty,gt=0"`
+    ImpressionsBased *bool `json:"impressions_based,omitempty"`
 }
 
 type CampaignSummary struct {

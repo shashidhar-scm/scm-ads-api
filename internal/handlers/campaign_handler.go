@@ -129,6 +129,7 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
         StartDate:    req.StartDate,
         EndDate:      req.EndDate,
         Budget:       req.Budget,
+        ImpressionsBased: req.ImpressionsBased,
         AdvertiserID: req.AdvertiserID,
         CreatedAt:    time.Now().UTC(),
         UpdatedAt:    time.Now().UTC(),
@@ -264,7 +265,7 @@ func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) 
 // @Summary Search campaigns
 // @Security BearerAuth
 // @Produce json
-// @Param query query string true "Search text (matches name, cities, start/end dates, budget, spent, impressions, clicks)"
+// @Param query query string true "Search text (matches name, cities, start/end dates, budget, spent, clicks)"
 // @Param page query int false "Page number" default(1)
 // @Param page_size query int false "Page size" default(20)
 // @Success 200 {object} map[string]interface{}
@@ -421,6 +422,9 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
     }
     if req.Budget != nil {
         existingCampaign.Budget = *req.Budget
+    }
+    if req.ImpressionsBased != nil {
+        existingCampaign.ImpressionsBased = *req.ImpressionsBased
     }
 
     // Update the campaign in the database

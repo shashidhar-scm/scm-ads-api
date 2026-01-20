@@ -32,6 +32,150 @@ func NewAdvertiserHandler(repo interfaces.AdvertiserRepository, db *sql.DB) *Adv
     }
 }
 
+func (h *AdvertiserHandler) listAdvertisersCreatedByUser(ctx context.Context, userID string, limit int, offset int) ([]models.Advertiser, error) {
+	if h.db == nil || strings.TrimSpace(userID) == "" {
+		return []models.Advertiser{}, nil
+	}
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE created_by = $1
+		ORDER BY name
+	`
+	args := []any{userID}
+	argPos := 2
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := h.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []models.Advertiser
+	for rows.Next() {
+		var adv models.Advertiser
+		var createdBy sql.NullString
+		if err := rows.Scan(&adv.ID, &adv.Name, &adv.Email, &createdBy, &adv.CreatedAt, &adv.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if createdBy.Valid {
+			adv.CreatedBy = createdBy.String
+		}
+		out = append(out, adv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []models.Advertiser{}
+	}
+	return out, nil
+}
+
+func (h *AdvertiserHandler) countAdvertisersCreatedByUser(ctx context.Context, userID string) (int, error) {
+	if h.db == nil || strings.TrimSpace(userID) == "" {
+		return 0, nil
+	}
+	var total int
+	if err := h.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM advertisers WHERE created_by = $1`, userID).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (h *AdvertiserHandler) searchAdvertisersCreatedByUser(ctx context.Context, userID string, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	if h.db == nil || strings.TrimSpace(userID) == "" {
+		return []models.Advertiser{}, 0, nil
+	}
+	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(strings.TrimSpace(term)))
+
+	var total int
+	countQuery := `
+		SELECT COUNT(*)
+		FROM advertisers
+		WHERE created_by = $1
+		  AND (LOWER(name) LIKE $2 OR LOWER(email) LIKE $2)
+	`
+	if err := h.db.QueryRowContext(ctx, countQuery, userID, likeTerm).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE created_by = $1
+		  AND (LOWER(name) LIKE $2 OR LOWER(email) LIKE $2)
+		ORDER BY name
+	`
+	args := []any{userID, likeTerm}
+	argPos := 3
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+		argPos++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argPos)
+		args = append(args, offset)
+	}
+
+	rows, err := h.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []models.Advertiser
+	for rows.Next() {
+		var adv models.Advertiser
+		var createdBy sql.NullString
+		if err := rows.Scan(&adv.ID, &adv.Name, &adv.Email, &createdBy, &adv.CreatedAt, &adv.UpdatedAt); err != nil {
+			return nil, 0, err
+		}
+		if createdBy.Valid {
+			adv.CreatedBy = createdBy.String
+		}
+		out = append(out, adv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if out == nil {
+		out = []models.Advertiser{}
+	}
+	return out, total, nil
+}
+
+func (h *AdvertiserHandler) getAdvertiserCreatedByUser(ctx context.Context, advertiserID string, userID string) (*models.Advertiser, error) {
+	if h.db == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(advertiserID) == "" {
+		return nil, sql.ErrNoRows
+	}
+	query := `
+		SELECT id, name, email, created_by, created_at, updated_at
+		FROM advertisers
+		WHERE id = $1
+		  AND created_by = $2
+	`
+	var adv models.Advertiser
+	var createdBy sql.NullString
+	if err := h.db.QueryRowContext(ctx, query, advertiserID, userID).Scan(&adv.ID, &adv.Name, &adv.Email, &createdBy, &adv.CreatedAt, &adv.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if createdBy.Valid {
+		adv.CreatedBy = createdBy.String
+	}
+	return &adv, nil
+}
+
 func (h *AdvertiserHandler) assignCreatorAdvertiserRole(ctx context.Context, userID string, advertiserID string) error {
 	if h.db == nil {
 		return nil
@@ -125,7 +269,13 @@ func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request
 	var advertiser *models.Advertiser
 	var err error
 	if permissionGlobal {
-		advertiser, err = h.repo.GetByID(r.Context(), id)
+		allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
+		if len(allowedIDs) == 0 && h.db != nil {
+			userID, _ := r.Context().Value(middleware.CtxUserID).(string)
+			advertiser, err = h.getAdvertiserCreatedByUser(r.Context(), id, userID)
+		} else {
+			advertiser, err = h.repo.GetByID(r.Context(), id)
+		}
 	} else {
 		allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
 		advertiser, err = h.repo.GetByIDInSet(r.Context(), id, allowedIDs)
@@ -159,10 +309,15 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 
 	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
 	allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
+	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
 
 	var total int
 	if permissionGlobal {
-		total, err = h.repo.Count(r.Context())
+		if len(allowedIDs) == 0 && h.db != nil {
+			total, err = h.countAdvertisersCreatedByUser(r.Context(), userID)
+		} else {
+			total, err = h.repo.Count(r.Context())
+		}
 	} else {
 		total, err = h.repo.CountByIDs(r.Context(), allowedIDs)
 	}
@@ -173,7 +328,11 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 
 	var advertisers []models.Advertiser
 	if permissionGlobal {
-		advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
+		if len(allowedIDs) == 0 && h.db != nil {
+			advertisers, err = h.listAdvertisersCreatedByUser(r.Context(), userID, p.limit, p.offset)
+		} else {
+			advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
+		}
 	} else {
 		advertisers, err = h.repo.ListByIDs(r.Context(), allowedIDs, p.limit, p.offset)
 	}
@@ -215,11 +374,16 @@ func (h *AdvertiserHandler) SearchAdvertisers(w http.ResponseWriter, r *http.Req
 
 	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
 	allowedIDs, _ := r.Context().Value(middleware.CtxAdvertiserIDs).([]string)
+	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
 
 	var advertisers []models.Advertiser
 	var total int
 	if permissionGlobal {
-		advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
+		if len(allowedIDs) == 0 && h.db != nil {
+			advertisers, total, err = h.searchAdvertisersCreatedByUser(r.Context(), userID, query, p.limit, p.offset)
+		} else {
+			advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
+		}
 	} else {
 		advertisers, total, err = h.repo.SearchByIDs(r.Context(), allowedIDs, query, p.limit, p.offset)
 	}

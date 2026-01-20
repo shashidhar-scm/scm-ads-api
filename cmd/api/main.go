@@ -12,6 +12,7 @@ package main
 
 import (
     "context"
+    "database/sql"
     "log"
     "net/http"
     "os"
@@ -35,18 +36,116 @@ func getEnv(key, defaultValue string) string {
     if strings.TrimSpace(v) == "" {
         return defaultValue
     }
-
     return v
 }
 
+func getEnvInt(key string, defaultValue int) int {
+    v := strings.TrimSpace(os.Getenv(key))
+    if v == "" {
+        return defaultValue
+    }
+    i, err := strconv.Atoi(v)
+    if err != nil {
+        return defaultValue
+    }
+    return i
+}
+
+func startPopImpressionsSync(ctx context.Context, db *sql.DB, popAPI services.PopAPI) {
+    if db == nil || popAPI == nil {
+        return
+    }
+
+    intervalSeconds := getEnvInt("POP_IMPRESSIONS_SYNC_INTERVAL_SECONDS", 300)
+    if intervalSeconds <= 0 {
+        intervalSeconds = 300
+    }
+    interval := time.Duration(intervalSeconds) * time.Second
+
+    go func() {
+        runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+        err := syncPopImpressionsOnce(runCtx, db, popAPI)
+        cancel()
+        if err != nil {
+            log.Printf("POP impressions sync failed: %v", err)
+        }
+
+        t := time.NewTicker(interval)
+        defer t.Stop()
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case <-t.C:
+            }
+
+            runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+            err := syncPopImpressionsOnce(runCtx, db, popAPI)
+            cancel()
+            if err != nil {
+                log.Printf("POP impressions sync failed: %v", err)
+            }
+        }
+    }()
+}
+
+func syncPopImpressionsOnce(ctx context.Context, db *sql.DB, popAPI services.PopAPI) error {
+    rows, err := db.QueryContext(ctx, `
+        SELECT id
+        FROM campaigns
+        WHERE status = 'active'
+          AND impressions_based = true
+    `)
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var campaignID string
+        if err := rows.Scan(&campaignID); err != nil {
+            return err
+        }
+        campaignID = strings.TrimSpace(campaignID)
+        if campaignID == "" {
+            continue
+        }
+
+        imps, err := popAPI.CampaignImpressions(ctx, campaignID)
+        if err != nil {
+            log.Printf("POP impressions: campaign_id=%s err=%v", campaignID, err)
+            continue
+        }
+        if imps == nil {
+            continue
+        }
+
+        for _, p := range imps.Posters {
+            creativeID := strings.TrimSpace(p.PosterID)
+            if creativeID == "" {
+                continue
+            }
+            if _, err := db.ExecContext(ctx, `
+                UPDATE creatives
+                SET impressions_served = GREATEST(impressions_served, $2)
+                WHERE id = $1
+            `, creativeID, p.Impressions); err != nil {
+                log.Printf("POP impressions update failed: creative_id=%s campaign_id=%s err=%v", creativeID, campaignID, err)
+                continue
+            }
+        }
+    }
+    return rows.Err()
+}
+
 func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface {
-	CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)
+    CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)
 }, notifier *services.CampaignNotifier) {
-	tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
-	activeStatus := getEnv("CAMPAIGN_ACTIVE_STATUS", "active")
-	completedStatus := getEnv("CAMPAIGN_COMPLETED_STATUS", "completed")
-	hhmm := getEnv("CAMPAIGN_COMPLETER_TIME", "00:02")
-	hour, minute := parseHHMM(hhmm, 0, 2)
+    tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
+    activeStatus := getEnv("CAMPAIGN_ACTIVE_STATUS", "active")
+    completedStatus := getEnv("CAMPAIGN_COMPLETED_STATUS", "completed")
+    hhmm := getEnv("CAMPAIGN_COMPLETER_TIME", "00:02")
+    hour, minute := parseHHMM(hhmm, 0, 2)
 
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
@@ -231,10 +330,13 @@ func main() {
     )
     notifier := services.NewCampaignNotifier(campaignRepo, userRepo, emailSender)
     startScheduledCampaignActivator(jobsCtx, campaignRepo)
-	startScheduledCampaignCompleter(jobsCtx, campaignRepo, notifier)
+    startScheduledCampaignCompleter(jobsCtx, campaignRepo, notifier)
     startCampaignNotificationDispatcher(jobsCtx, notifier)
 
-	// Initialize S3 configuration
+    popClient := services.NewPopClient(cfg.PopAPIBaseURL)
+    startPopImpressionsSync(jobsCtx, database.DB, popClient)
+
+    // Initialize S3 configuration
     s3Config, err := config.NewS3Config()
     if err != nil {
         log.Fatalf("Failed to create S3 client: %v", err)

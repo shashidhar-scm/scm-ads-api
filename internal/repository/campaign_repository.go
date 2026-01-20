@@ -33,7 +33,7 @@ func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campai
     query := `
         INSERT INTO campaigns (
             name, status, cities, start_date, end_date, budget, 
-            spent, impressions, clicks, ctr, advertiser_id
+            spent, clicks, ctr, advertiser_id, impressions_based
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id, created_at, updated_at
     `
@@ -48,10 +48,10 @@ func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campai
         campaign.EndDate,
         campaign.Budget,
         campaign.Spent,
-        campaign.Impressions,
         campaign.Clicks,
         campaign.CTR,
         campaign.AdvertiserID,
+        campaign.ImpressionsBased,
     ).Scan(&campaign.ID, &campaign.CreatedAt, &campaign.UpdatedAt)
     fmt.Println("Campaign created:", campaign)
     return err
@@ -61,7 +61,7 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
     query := `
         SELECT 
             id, name, status, cities, start_date, end_date, budget,
-            spent, impressions, clicks, ctr, advertiser_id,
+            spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
         FROM campaigns 
         WHERE id = $1
@@ -77,10 +77,10 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
         &campaign.EndDate,
         &campaign.Budget,
         &campaign.Spent,
-        &campaign.Impressions,
         &campaign.Clicks,
         &campaign.CTR,
         &campaign.AdvertiserID,
+        &campaign.ImpressionsBased,
         &campaign.CreatedAt,
         &campaign.UpdatedAt,
     )
@@ -102,7 +102,7 @@ func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.Camp
         SELECT
             COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_campaign_count,
             COALESCE(SUM(budget), 0) AS total_budget,
-            COALESCE(SUM(impressions), 0) AS total_impression
+            0 AS total_impression
         FROM campaigns
         WHERE 1=1
     `
@@ -271,7 +271,6 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
            OR LOWER(to_char(end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
            OR LOWER(CAST(budget AS TEXT)) LIKE $1
            OR LOWER(CAST(spent AS TEXT)) LIKE $1
-           OR LOWER(CAST(impressions AS TEXT)) LIKE $1
            OR LOWER(CAST(clicks AS TEXT)) LIKE $1
     `
 
@@ -283,7 +282,7 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
 	query := `
         SELECT 
             id, name, status, cities, start_date, end_date, budget,
-            spent, impressions, clicks, ctr, advertiser_id,
+            spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
         FROM campaigns
         WHERE LOWER(name) LIKE $1
@@ -292,7 +291,6 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
            OR LOWER(to_char(end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
            OR LOWER(CAST(budget AS TEXT)) LIKE $1
            OR LOWER(CAST(spent AS TEXT)) LIKE $1
-           OR LOWER(CAST(impressions AS TEXT)) LIKE $1
            OR LOWER(CAST(clicks AS TEXT)) LIKE $1
         ORDER BY updated_at DESC
         LIMIT $2 OFFSET $3
@@ -316,10 +314,10 @@ func (r *campaignRepository) Search(ctx context.Context, term string, limit int,
 			&campaign.EndDate,
 			&campaign.Budget,
 			&campaign.Spent,
-			&campaign.Impressions,
 			&campaign.Clicks,
 			&campaign.CTR,
 			&campaign.AdvertiserID,
+			&campaign.ImpressionsBased,
 			&campaign.CreatedAt,
 			&campaign.UpdatedAt,
 		); err != nil {
@@ -340,7 +338,7 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
     query := `
         SELECT 
             id, name, status, cities, start_date, end_date, budget,
-            spent, impressions, clicks, ctr, advertiser_id,
+            spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
         FROM campaigns
         WHERE 1=1
@@ -410,10 +408,10 @@ func (r *campaignRepository) List(ctx context.Context, filter interfaces.Campaig
             &campaign.EndDate,
             &campaign.Budget,
             &campaign.Spent,
-            &campaign.Impressions,
             &campaign.Clicks,
             &campaign.CTR,
             &campaign.AdvertiserID,
+            &campaign.ImpressionsBased,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         )
@@ -430,7 +428,7 @@ func (r *campaignRepository) ListByEndDate(ctx context.Context, endDate time.Tim
     query := `
         SELECT 
             id, name, status, cities, start_date, end_date, budget,
-            spent, impressions, clicks, ctr, advertiser_id,
+            spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
         FROM campaigns
         WHERE DATE(end_date) = DATE($1)
@@ -454,10 +452,10 @@ func (r *campaignRepository) ListByEndDate(ctx context.Context, endDate time.Tim
             &campaign.EndDate,
             &campaign.Budget,
             &campaign.Spent,
-            &campaign.Impressions,
             &campaign.Clicks,
             &campaign.CTR,
             &campaign.AdvertiserID,
+            &campaign.ImpressionsBased,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         )
@@ -486,10 +484,10 @@ func (r *campaignRepository) Update(ctx context.Context, id string, campaign *mo
             end_date = $5, 
             budget = $6, 
             spent = $7, 
-            impressions = $8, 
-            clicks = $9, 
-            ctr = $10, 
-            advertiser_id = $11,
+            clicks = $8, 
+            ctr = $9, 
+            advertiser_id = $10,
+            impressions_based = $11,
             updated_at = NOW() AT TIME ZONE 'UTC'
         WHERE id = $12
         RETURNING updated_at
@@ -505,10 +503,10 @@ func (r *campaignRepository) Update(ctx context.Context, id string, campaign *mo
         campaign.EndDate,
         campaign.Budget,
         campaign.Spent,
-        campaign.Impressions,
         campaign.Clicks,
         campaign.CTR,
         campaign.AdvertiserID,
+        campaign.ImpressionsBased,
         id,
     ).Scan(&campaign.UpdatedAt)
 
@@ -558,7 +556,7 @@ func (r *campaignRepository) ListByStartDate(ctx context.Context, startDate time
     query := `
         SELECT 
             id, name, status, cities, start_date, end_date, budget,
-            spent, impressions, clicks, ctr, advertiser_id,
+            spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
         FROM campaigns
         WHERE DATE(start_date) = DATE($1)
@@ -582,10 +580,10 @@ func (r *campaignRepository) ListByStartDate(ctx context.Context, startDate time
             &campaign.EndDate,
             &campaign.Budget,
             &campaign.Spent,
-            &campaign.Impressions,
             &campaign.Clicks,
             &campaign.CTR,
             &campaign.AdvertiserID,
+            &campaign.ImpressionsBased,
             &campaign.CreatedAt,
             &campaign.UpdatedAt,
         )
