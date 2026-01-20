@@ -2,21 +2,23 @@
 package handlers
 
 import (
-    "database/sql"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "log"
-    "net/http"
-    "strings"
-    "time"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+	"time"
 
     "github.com/go-chi/chi/v5"
     "github.com/go-playground/validator/v10"
     "github.com/google/uuid"
     "github.com/lib/pq"
-    "scm/internal/interfaces"
-    "scm/internal/models"
+	"scm/internal/interfaces"
+	"scm/internal/middleware"
+	"scm/internal/repository"
+	"scm/internal/models"
 	"scm/internal/services"
 )
 
@@ -32,22 +34,25 @@ func writeJSONErrorCampaign(w http.ResponseWriter, status int, code string, mess
 type CampaignHandler struct {
     repo        interfaces.CampaignRepository
     validator   *validator.Validate
-	popAPI      services.PopAPI
+    popAPI      services.PopAPI
+    db          *sql.DB
 }
 
-func NewCampaignHandler(repo interfaces.CampaignRepository) *CampaignHandler {
+func NewCampaignHandler(repo interfaces.CampaignRepository, db *sql.DB) *CampaignHandler {
     return &CampaignHandler{
         repo:      repo,
         validator: validator.New(),
+        db:        db,
     }
 }
 
-func NewCampaignHandlerWithPop(repo interfaces.CampaignRepository, popAPI services.PopAPI) *CampaignHandler {
-	return &CampaignHandler{
-		repo:      repo,
-		validator: validator.New(),
-		popAPI:    popAPI,
-	}
+func NewCampaignHandlerWithPop(repo interfaces.CampaignRepository, popAPI services.PopAPI, db *sql.DB) *CampaignHandler {
+    return &CampaignHandler{
+        repo:      repo,
+        validator: validator.New(),
+        popAPI:    popAPI,
+        db:        db,
+    }
 }
 
 // @Tags Campaigns
@@ -61,41 +66,41 @@ func NewCampaignHandlerWithPop(repo interfaces.CampaignRepository, popAPI servic
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/campaigns/{id}/impressions [get]
 func (h *CampaignHandler) GetCampaignImpressions(w http.ResponseWriter, r *http.Request) {
-	campaignID := chi.URLParam(r, "id")
-	if campaignID == "" {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
-		return
-	}
+    campaignID := chi.URLParam(r, "id")
+    if campaignID == "" {
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
+        return
+    }
 
-	if _, err := h.repo.GetByID(r.Context(), campaignID); err != nil {
-		if err == sql.ErrNoRows {
-			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
-			return
-		}
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
-		return
-	}
+    if _, err := h.repo.GetByID(r.Context(), campaignID); err != nil {
+        if err == sql.ErrNoRows {
+            writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+            return
+        }
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
+        return
+    }
 
-	if h.popAPI == nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_not_configured", "POP API client is not configured")
-		return
-	}
+    if h.popAPI == nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_not_configured", "POP API client is not configured")
+        return
+    }
 
-	impressions, err := h.popAPI.CampaignImpressions(r.Context(), campaignID)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_request_failed", "Failed to fetch impressions")
-		return
-	}
+    impressions, err := h.popAPI.CampaignImpressions(r.Context(), campaignID)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_request_failed", "Failed to fetch impressions")
+        return
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"data": map[string]any{
-			"campaign_id": campaignID,
-			"impressions": impressions.Impressions,
-			"posters":     impressions.Posters,
-		},
-	})
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+    _ = json.NewEncoder(w).Encode(map[string]any{
+        "data": map[string]any{
+            "campaign_id": campaignID,
+            "impressions": impressions.Impressions,
+            "posters":     impressions.Posters,
+        },
+    })
 }
 
 // @Tags Campaigns
@@ -200,25 +205,46 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
     log.Println("=== ListCampaigns handler called ===")
 
-	p, err := parsePaginationParams(r, 50, 200)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
-		return
-	}
+    p, err := parsePaginationParams(r, 50, 200)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+        return
+    }
 
-	includeImpressions := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_impressions")), "true")
-	if includeImpressions && h.popAPI == nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_not_configured", "POP API client is not configured")
-		return
-	}
+    includeImpressions := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_impressions")), "true")
+    if includeImpressions && h.popAPI == nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "pop_not_configured", "POP API client is not configured")
+        return
+    }
 
-	filter := interfaces.CampaignFilter{Limit: p.limit, Offset: p.offset}
+    filter := interfaces.CampaignFilter{Limit: p.limit, Offset: p.offset}
 
-	total, err := h.repo.Count(r.Context(), filter)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
-		return
-	}
+    // If not a global admin, scope list to campaigns whose advertisers were created by this user.
+    userID, _ := r.Context().Value(middleware.CtxUserID).(string)
+    isGlobalAdmin := false
+    if h.db != nil && strings.TrimSpace(userID) != "" {
+        ur := repository.NewUserRoleRepository(h.db)
+        isSuper, err := ur.IsSuperAdmin(r.Context(), userID)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+            return
+        }
+        isAdmin, err := ur.IsAdmin(r.Context(), userID)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+            return
+        }
+        isGlobalAdmin = isSuper || isAdmin
+    }
+    if !isGlobalAdmin {
+        filter.CreatedByUserID = &userID
+    }
+
+    total, err := h.repo.Count(r.Context(), filter)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+        return
+    }
 
     summary, err := h.repo.Summary(r.Context(), filter)
     if err != nil {
@@ -285,7 +311,20 @@ func (h *CampaignHandler) SearchCampaigns(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	campaigns, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset)
+	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin := false
+	if h.db != nil && strings.TrimSpace(userID) != "" {
+		ur := repository.NewUserRoleRepository(h.db)
+		isSuper, _ := ur.IsSuperAdmin(r.Context(), userID)
+		isAdmin, _ := ur.IsAdmin(r.Context(), userID)
+		isGlobalAdmin = isSuper || isAdmin
+	}
+	var createdByFilter *string
+	if !isGlobalAdmin {
+		createdByFilter = &userID
+	}
+
+	campaigns, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset, createdByFilter)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_campaigns_failed", "Failed to search campaigns")
 		return

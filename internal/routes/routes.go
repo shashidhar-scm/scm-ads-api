@@ -100,7 +100,6 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth routes
 		RegisterAuthRoutes(r, db, cfg)
-		RegisterUserRoutes(r, db)
 		RegisterPublicCreativeRoutes(r, db, s3Config)
 
         r.Get("/debug/env", func(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +173,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 			RegisterProjectRoutes(r, db)
 			RegisterDeviceReadRoutes(r, db)
 			RegisterVenueRoutes(r, db)
+			RegisterUserRoutes(r, db)
 
         })
     })

@@ -9,6 +9,8 @@ type User struct {
 	UserName     string    `json:"user_name,omitempty"`
 	PhoneNumber  string    `json:"phone_number,omitempty"`
 	PasswordHash string    `json:"-"`
+	Roles        []string  `json:"roles,omitempty"`
+	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -38,6 +40,7 @@ type LoginResponse struct {
 	UserName    string `json:"user_name,omitempty"`
 	PhoneNumber string `json:"phone_number,omitempty"`
 	ID          string `json:"id"`
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
 	Roles       []LoginRole `json:"roles"`
 }
 

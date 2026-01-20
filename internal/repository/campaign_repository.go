@@ -103,7 +103,7 @@ func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.Camp
             COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_campaign_count,
             COALESCE(SUM(budget), 0) AS total_budget,
             0 AS total_impression
-        FROM campaigns
+        FROM campaigns c
         WHERE 1=1
     `
 
@@ -112,8 +112,14 @@ func (r *campaignRepository) Summary(ctx context.Context, filter interfaces.Camp
     argPos := 1
 
     if filter.AdvertiserID != "" {
-        whereClauses = append(whereClauses, fmt.Sprintf("advertiser_id = $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.advertiser_id = $%d", argPos))
         args = append(args, filter.AdvertiserID)
+        argPos++
+    }
+
+    if filter.CreatedByUserID != nil && strings.TrimSpace(*filter.CreatedByUserID) != "" {
+        whereClauses = append(whereClauses, fmt.Sprintf("EXISTS (SELECT 1 FROM advertisers a WHERE a.id = c.advertiser_id AND a.created_by = $%d)", argPos))
+        args = append(args, strings.TrimSpace(*filter.CreatedByUserID))
         argPos++
     }
 
@@ -214,9 +220,9 @@ func (r *campaignRepository) CompleteActiveEndedBefore(ctx context.Context, now 
 }
 
 func (r *campaignRepository) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) {
-	query := `
+    query := `
         SELECT COUNT(*)
-        FROM campaigns
+        FROM campaigns c
         WHERE 1=1
     `
 
@@ -225,25 +231,31 @@ func (r *campaignRepository) Count(ctx context.Context, filter interfaces.Campai
     argPos := 1
 
     if filter.AdvertiserID != "" {
-        whereClauses = append(whereClauses, fmt.Sprintf("advertiser_id = $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.advertiser_id = $%d", argPos))
         args = append(args, filter.AdvertiserID)
         argPos++
     }
 
+    if filter.CreatedByUserID != nil && strings.TrimSpace(*filter.CreatedByUserID) != "" {
+        whereClauses = append(whereClauses, fmt.Sprintf("EXISTS (SELECT 1 FROM advertisers a WHERE a.id = c.advertiser_id AND a.created_by = $%d)", argPos))
+        args = append(args, strings.TrimSpace(*filter.CreatedByUserID))
+        argPos++
+    }
+
     if filter.Status != "" {
-        whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.status = $%d", argPos))
         args = append(args, filter.Status)
         argPos++
     }
 
     if !filter.StartDate.IsZero() {
-        whereClauses = append(whereClauses, fmt.Sprintf("start_date >= $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.start_date >= $%d", argPos))
         args = append(args, filter.StartDate)
         argPos++
     }
 
     if !filter.EndDate.IsZero() {
-        whereClauses = append(whereClauses, fmt.Sprintf("end_date <= $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.end_date <= $%d", argPos))
         args = append(args, filter.EndDate)
         argPos++
     }
@@ -256,118 +268,141 @@ func (r *campaignRepository) Count(ctx context.Context, filter interfaces.Campai
     if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
         return 0, err
     }
-	return total, nil
+    return total, nil
 }
 
-func (r *campaignRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Campaign, int, error) {
-	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
+func (r *campaignRepository) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Campaign, int, error) {
+    likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
-	countQuery := `
+    countQuery := `
         SELECT COUNT(*)
-        FROM campaigns
-        WHERE LOWER(name) LIKE $1
-           OR LOWER(COALESCE(array_to_string(cities, ' '), '')) LIKE $1
-           OR LOWER(to_char(start_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
-           OR LOWER(to_char(end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
-           OR LOWER(CAST(budget AS TEXT)) LIKE $1
-           OR LOWER(CAST(spent AS TEXT)) LIKE $1
-           OR LOWER(CAST(clicks AS TEXT)) LIKE $1
+        FROM campaigns c
+        WHERE (
+            LOWER(c.name) LIKE $1
+           OR LOWER(COALESCE(array_to_string(c.cities, ' '), '' )) LIKE $1
+           OR LOWER(to_char(c.start_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(to_char(c.end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(CAST(c.budget AS TEXT)) LIKE $1
+           OR LOWER(CAST(c.spent AS TEXT)) LIKE $1
+           OR LOWER(CAST(c.clicks AS TEXT)) LIKE $1
+        )
     `
 
-	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("search campaigns count: %w", err)
-	}
+    args := []any{likeTerm}
+    if createdByUserID != nil && strings.TrimSpace(*createdByUserID) != "" {
+        countQuery += " AND EXISTS (SELECT 1 FROM advertisers a WHERE a.id = c.advertiser_id AND a.created_by = $2)"
+        args = append(args, strings.TrimSpace(*createdByUserID))
+    }
 
-	query := `
-        SELECT 
+    var total int
+    if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+        return nil, 0, fmt.Errorf("search campaigns count: %w", err)
+    }
+
+    query := `
+        SELECT
             id, name, status, cities, start_date, end_date, budget,
             spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
-        FROM campaigns
-        WHERE LOWER(name) LIKE $1
-           OR LOWER(COALESCE(array_to_string(cities, ' '), '')) LIKE $1
-           OR LOWER(to_char(start_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
-           OR LOWER(to_char(end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
-           OR LOWER(CAST(budget AS TEXT)) LIKE $1
-           OR LOWER(CAST(spent AS TEXT)) LIKE $1
-           OR LOWER(CAST(clicks AS TEXT)) LIKE $1
-        ORDER BY updated_at DESC
-        LIMIT $2 OFFSET $3
+        FROM campaigns c
+        WHERE (
+            LOWER(c.name) LIKE $1
+           OR LOWER(COALESCE(array_to_string(c.cities, ' '), '' )) LIKE $1
+           OR LOWER(to_char(c.start_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(to_char(c.end_date, 'YYYY-MM-DD"T"HH24:MI:SS')) LIKE $1
+           OR LOWER(CAST(c.budget AS TEXT)) LIKE $1
+           OR LOWER(CAST(c.spent AS TEXT)) LIKE $1
+           OR LOWER(CAST(c.clicks AS TEXT)) LIKE $1
+        )
     `
 
-	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("search campaigns: %w", err)
-	}
-	defer rows.Close()
+    qArgs := []any{likeTerm}
+    if createdByUserID != nil && strings.TrimSpace(*createdByUserID) != "" {
+        query = strings.ReplaceAll(query, "WHERE (", "WHERE EXISTS (SELECT 1 FROM advertisers a WHERE a.id = c.advertiser_id AND a.created_by = $2) AND (")
+        qArgs = append(qArgs, strings.TrimSpace(*createdByUserID))
+    }
 
-	var campaigns []*models.Campaign
-	for rows.Next() {
-		var campaign models.Campaign
-		if err := rows.Scan(
-			&campaign.ID,
-			&campaign.Name,
-			&campaign.Status,
-			pq.Array(&campaign.Cities),
-			&campaign.StartDate,
-			&campaign.EndDate,
-			&campaign.Budget,
-			&campaign.Spent,
-			&campaign.Clicks,
-			&campaign.CTR,
-			&campaign.AdvertiserID,
-			&campaign.ImpressionsBased,
-			&campaign.CreatedAt,
-			&campaign.UpdatedAt,
-		); err != nil {
-			return nil, 0, fmt.Errorf("scan campaign: %w", err)
-		}
-		campaigns = append(campaigns, &campaign)
-	}
+    query += " ORDER BY updated_at DESC"
+    query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(qArgs)+1, len(qArgs)+2)
+    qArgs = append(qArgs, limit, offset)
 
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate campaigns: %w", err)
-	}
+    rows, err := r.db.QueryContext(ctx, query, qArgs...)
+    if err != nil {
+        return nil, 0, fmt.Errorf("search campaigns: %w", err)
+    }
+    defer rows.Close()
 
-	return campaigns, total, nil
+    var campaigns []*models.Campaign
+    for rows.Next() {
+        var campaign models.Campaign
+        if err := rows.Scan(
+            &campaign.ID,
+            &campaign.Name,
+            &campaign.Status,
+            pq.Array(&campaign.Cities),
+            &campaign.StartDate,
+            &campaign.EndDate,
+            &campaign.Budget,
+            &campaign.Spent,
+            &campaign.Clicks,
+            &campaign.CTR,
+            &campaign.AdvertiserID,
+            &campaign.ImpressionsBased,
+            &campaign.CreatedAt,
+            &campaign.UpdatedAt,
+        ); err != nil {
+            return nil, 0, fmt.Errorf("scan campaign: %w", err)
+        }
+        campaigns = append(campaigns, &campaign)
+    }
+
+    if err := rows.Err(); err != nil {
+        return nil, 0, fmt.Errorf("iterate campaigns: %w", err)
+    }
+
+    return campaigns, total, nil
 }
 
-// List retrieves a list of campaigns based on the provided filter
 func (r *campaignRepository) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
     query := `
         SELECT 
             id, name, status, cities, start_date, end_date, budget,
             spent, clicks, ctr, advertiser_id, impressions_based,
             created_at, updated_at
-        FROM campaigns
+        FROM campaigns c
         WHERE 1=1
     `
-    
-    var args []interface{}
-    var whereClauses []string
-    argPos := 1
+
+	var args []interface{}
+	var whereClauses []string
+	argPos := 1
 
     if filter.AdvertiserID != "" {
-        whereClauses = append(whereClauses, fmt.Sprintf("advertiser_id = $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.advertiser_id = $%d", argPos))
         args = append(args, filter.AdvertiserID)
         argPos++
     }
 
+	if filter.CreatedByUserID != nil && strings.TrimSpace(*filter.CreatedByUserID) != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("EXISTS (SELECT 1 FROM advertisers a WHERE a.id = c.advertiser_id AND a.created_by = $%d)", argPos))
+		args = append(args, strings.TrimSpace(*filter.CreatedByUserID))
+		argPos++
+	}
+
     if filter.Status != "" {
-        whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.status = $%d", argPos))
         args = append(args, filter.Status)
         argPos++
     }
 
     if !filter.StartDate.IsZero() {
-        whereClauses = append(whereClauses, fmt.Sprintf("start_date >= $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.start_date >= $%d", argPos))
         args = append(args, filter.StartDate)
         argPos++
     }
 
     if !filter.EndDate.IsZero() {
-        whereClauses = append(whereClauses, fmt.Sprintf("end_date <= $%d", argPos))
+        whereClauses = append(whereClauses, fmt.Sprintf("c.end_date <= $%d", argPos))
         args = append(args, filter.EndDate)
         argPos++
     }

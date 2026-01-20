@@ -14,9 +14,9 @@ import (
 type CreativeRepository interface {
 	Create(ctx context.Context, creative *models.Creative) error
 	GetByID(ctx context.Context, id string) (*models.Creative, error)
-	ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error)
-	CountAll(ctx context.Context) (int, error)
-	Search(ctx context.Context, term string, limit int, offset int) ([]*models.Creative, int, error)
+	ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error)
+	CountAll(ctx context.Context, createdByUserID *string) (int, error)
+	Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Creative, int, error)
 	ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error)
 	CountByCampaign(ctx context.Context, campaignID string) (int, error)
 	ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error)
@@ -115,16 +115,27 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
     return &creative, nil
 }
 
-func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int) ([]*models.Creative, error) {
+
+func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
-		FROM creatives
-		ORDER BY uploaded_at DESC
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served,
+			cr.rotation_group_id, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+		FROM creatives cr
+		JOIN campaigns ca ON ca.id = cr.campaign_id
+		JOIN advertisers a ON a.id = ca.advertiser_id
+		WHERE 1=1
 	`
 
-	args := make([]any, 0, 2)
+	args := make([]any, 0, 3)
 	argPos := 1
+	if createdByUserID != nil && strings.TrimSpace(*createdByUserID) != "" {
+		query += fmt.Sprintf(" AND a.created_by = $%d", argPos)
+		args = append(args, strings.TrimSpace(*createdByUserID))
+		argPos++
+	}
+
+	query += " ORDER BY cr.uploaded_at DESC"
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argPos)
 		args = append(args, limit)
@@ -145,6 +156,7 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int)
     for rows.Next() {
         var creative models.Creative
         var impressionCount sql.NullInt64
+        var rotationGroupID sql.NullString
         if err := rows.Scan(
             &creative.ID,
             &creative.Name,
@@ -154,6 +166,7 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int)
             &creative.Size,
             &impressionCount,
             &creative.ImpressionsServed,
+            &rotationGroupID,
             &creative.CampaignID,
             pq.Array(&creative.SelectedDays),
             pq.Array(&creative.TimeSlots),
@@ -166,52 +179,87 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int)
             v := impressionCount.Int64
             creative.ImpressionCount = &v
         }
+        if rotationGroupID.Valid {
+            v := rotationGroupID.String
+            creative.RotationGroupID = &v
+        }
         creatives = append(creatives, &creative)
     }
 
     	return creatives, rows.Err()
 }
 
-func (r *creativeRepository) CountAll(ctx context.Context) (int, error) {
-	query := `SELECT COUNT(*) FROM creatives`
+func (r *creativeRepository) CountAll(ctx context.Context, createdByUserID *string) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM creatives cr
+		JOIN campaigns ca ON ca.id = cr.campaign_id
+		JOIN advertisers a ON a.id = ca.advertiser_id
+		WHERE 1=1
+	`
+	args := make([]any, 0, 1)
+	if createdByUserID != nil && strings.TrimSpace(*createdByUserID) != "" {
+		query += " AND a.created_by = $1"
+		args = append(args, strings.TrimSpace(*createdByUserID))
+	}
 	var total int
-	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
 }
 
-func (r *creativeRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Creative, int, error) {
+func (r *creativeRepository) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Creative, int, error) {
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
 	countQuery := `
 		SELECT COUNT(*)
-		FROM creatives
-		WHERE LOWER(name) LIKE $1
-			OR LOWER(type::text) LIKE $1
-			OR LOWER(COALESCE(array_to_string(selected_days, ' '), '')) LIKE $1
-			OR LOWER(COALESCE(array_to_string(time_slots, ' '), '')) LIKE $1
-			OR LOWER(COALESCE(array_to_string(devices, ' '), '')) LIKE $1
+		FROM creatives cr
+		JOIN campaigns ca ON ca.id = cr.campaign_id
+		JOIN advertisers a ON a.id = ca.advertiser_id
+		WHERE (
+			LOWER(cr.name) LIKE $1
+			OR LOWER(cr.type::text) LIKE $1
+			OR LOWER(COALESCE(array_to_string(cr.selected_days, ' '), '')) LIKE $1
+			OR LOWER(COALESCE(array_to_string(cr.time_slots, ' '), '')) LIKE $1
+			OR LOWER(COALESCE(array_to_string(cr.devices, ' '), '')) LIKE $1
+		)
 	`
+	args := []any{likeTerm}
+	if createdByUserID != nil && strings.TrimSpace(*createdByUserID) != "" {
+		countQuery += " AND a.created_by = $2"
+		args = append(args, strings.TrimSpace(*createdByUserID))
+	}
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("search creatives count: %w", err)
 	}
 
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
-		FROM creatives
-		WHERE LOWER(name) LIKE $1
-			OR LOWER(type::text) LIKE $1
-			OR EXISTS (SELECT 1 FROM unnest(selected_days) d WHERE LOWER(d) LIKE $1)
-			OR EXISTS (SELECT 1 FROM unnest(time_slots) t WHERE LOWER(t) LIKE $1)
-			OR EXISTS (SELECT 1 FROM unnest(devices) dv WHERE LOWER(dv) LIKE $1)
-		ORDER BY uploaded_at DESC
-		LIMIT $2 OFFSET $3
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served,
+			cr.rotation_group_id, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+		FROM creatives cr
+		JOIN campaigns ca ON ca.id = cr.campaign_id
+		JOIN advertisers a ON a.id = ca.advertiser_id
+		WHERE (
+			LOWER(cr.name) LIKE $1
+			OR LOWER(cr.type::text) LIKE $1
+			OR EXISTS (SELECT 1 FROM unnest(cr.selected_days) d WHERE LOWER(d) LIKE $1)
+			OR EXISTS (SELECT 1 FROM unnest(cr.time_slots) t WHERE LOWER(t) LIKE $1)
+			OR EXISTS (SELECT 1 FROM unnest(cr.devices) dv WHERE LOWER(dv) LIKE $1)
+		)
 	`
+	qArgs := []any{likeTerm}
+	if createdByUserID != nil && strings.TrimSpace(*createdByUserID) != "" {
+		query += " AND a.created_by = $2"
+		qArgs = append(qArgs, strings.TrimSpace(*createdByUserID))
+	}
+	query += " ORDER BY cr.uploaded_at DESC"
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(qArgs)+1, len(qArgs)+2)
+	qArgs = append(qArgs, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, qArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("search creatives: %w", err)
 	}
@@ -299,6 +347,7 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
             &creative.Size,
             &impressionCount,
             &creative.ImpressionsServed,
+            &creative.RotationGroupID,
             &creative.CampaignID,
             pq.Array(&creative.SelectedDays),
             pq.Array(&creative.TimeSlots),
@@ -433,7 +482,12 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		}
 		creatives = append(creatives, &creative)
 	}
-	return creatives, rows.Err()
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return creatives, nil
 }
 
 func (r *creativeRepository) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {

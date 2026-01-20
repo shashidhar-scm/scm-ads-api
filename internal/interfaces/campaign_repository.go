@@ -10,6 +10,7 @@ import (
 // CampaignFilter defines the filter criteria for listing campaigns
 type CampaignFilter struct {
     AdvertiserID string
+    CreatedByUserID *string
     Status       string
     StartDate    time.Time
     EndDate      time.Time
@@ -23,7 +24,7 @@ type CampaignRepository interface {
     GetByID(ctx context.Context, id string) (*models.Campaign, error)
     List(ctx context.Context, filter CampaignFilter) ([]*models.Campaign, error)
     Count(ctx context.Context, filter CampaignFilter) (int, error)
-    Search(ctx context.Context, term string, limit int, offset int) ([]*models.Campaign, int, error)
+    Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Campaign, int, error)
     Summary(ctx context.Context, filter CampaignFilter) (*models.CampaignSummary, error)
     ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error)
     CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)

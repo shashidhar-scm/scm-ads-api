@@ -35,10 +35,10 @@ func TestForgotPasswordReturnsTokenWhenEnabled(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, created_at\s+FROM users\s+WHERE email = \$1`).
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
 		WithArgs("a@b.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "created_at"}).
-			AddRow("u1", "a@b.com", "A", "a", "999", "hash", time.Now().UTC()))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "last_login_at", "created_at"}).
+			AddRow("u1", "a@b.com", "A", "a", "999", "hash", nil, time.Now().UTC()))
 
 	mock.ExpectQuery("INSERT INTO password_reset_tokens").WillReturnRows(
 		sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now().UTC()),
@@ -300,9 +300,9 @@ func TestLoginSuccess(t *testing.T) {
 		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
 	}
 
-	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, created_at\s+FROM users`).WithArgs("a@b.com").WillReturnRows(
-		sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "created_at"}).
-			AddRow("u1", "a@b.com", "A", "a", "999", string(hash), time.Now().UTC()),
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users`).WithArgs("a@b.com").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "last_login_at", "created_at"}).
+			AddRow("u1", "a@b.com", "A", "a", "999", string(hash), nil, time.Now().UTC()),
 	)
 
 	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).WithArgs("u1").WillReturnRows(
@@ -310,9 +310,7 @@ func TestLoginSuccess(t *testing.T) {
 			AddRow("advertiser", nil),
 	)
 
-	mock.ExpectQuery(`SELECT DISTINCT advertiser_id\s+FROM user_roles`).WithArgs("u1").WillReturnRows(
-		sqlmock.NewRows([]string{"advertiser_id"}),
-	)
+	mock.ExpectExec(`UPDATE users SET last_login_at`).WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev"}, services.EmailSender(&noopMailer{}))
 	payload := map[string]any{"identifier": "a@b.com", "password": "Password1!"}

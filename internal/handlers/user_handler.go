@@ -1,25 +1,29 @@
 package handlers
 
 import (
-    "encoding/json"
-    "net/http"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
 
-    "github.com/go-chi/chi/v5"
-    "github.com/go-playground/validator/v10"
-    "golang.org/x/crypto/bcrypt"
-    "scm/internal/models"
-    "scm/internal/repository"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+	"github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
+	"scm/internal/models"
+	"scm/internal/repository"
 )
 
 type UserHandler struct {
-    users repository.UserRepository
-    v     *validator.Validate
+	users repository.UserRepository
+	v     *validator.Validate
+	db    *sql.DB
 }
 
-func NewUserHandler(users repository.UserRepository) *UserHandler {
-    v := validator.New()
-    _ = v.RegisterValidation("strongpassword", strongPassword)
-    return &UserHandler{users: users, v: v}
+func NewUserHandler(users repository.UserRepository, db *sql.DB) *UserHandler {
+	v := validator.New()
+	_ = v.RegisterValidation("strongpassword", strongPassword)
+	return &UserHandler{users: users, v: v, db: db}
 }
 
 // @Tags Account
@@ -52,6 +56,48 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		users = []models.User{}
 	}
 
+	if h.db != nil && len(users) > 0 {
+		ids := make([]string, 0, len(users))
+		for _, u := range users {
+			ids = append(ids, u.ID)
+		}
+
+		rows, err := h.db.QueryContext(r.Context(), `
+			SELECT ur.user_id, ro.name
+			FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = ANY($1)
+			ORDER BY ur.created_at ASC
+		`, pq.Array(ids))
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
+			return
+		}
+		defer rows.Close()
+
+		byUser := make(map[string][]string, len(users))
+		for rows.Next() {
+			var userID string
+			var roleName string
+			if err := rows.Scan(&userID, &roleName); err != nil {
+				writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
+				return
+			}
+			byUser[userID] = append(byUser[userID], roleName)
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
+			return
+		}
+
+		for i := range users {
+			users[i].Roles = byUser[users[i].ID]
+			if users[i].Roles == nil {
+				users[i].Roles = []string{}
+			}
+		}
+	}
+
 	writePaginatedResponse(w, http.StatusOK, users, p.page, p.pageSize, total)
 }
 
@@ -66,24 +112,57 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/users/{id}/ [get]
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
-        return
-    }
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
+		return
+	}
 
-    u, err := h.users.GetByID(r.Context(), id)
-    if err != nil {
-        if err.Error() == "user not found" {
-            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
-            return
-        }
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
-        return
-    }
+	u, err := h.users.GetByID(r.Context(), id)
+	if err != nil {
+		if err.Error() == "user not found" {
+			writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(u)
+	if h.db != nil {
+		rows, err := h.db.QueryContext(r.Context(), `
+			SELECT ro.name
+			FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = $1
+			ORDER BY ur.created_at ASC
+		`, u.ID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
+			return
+		}
+		defer rows.Close()
+
+		var roles []string
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err != nil {
+				writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
+				return
+			}
+			roles = append(roles, roleName)
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
+			return
+		}
+		if roles == nil {
+			roles = []string{}
+		}
+		u.Roles = roles
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(u)
 }
 
 // @Tags Account
@@ -222,6 +301,14 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
         if err.Error() == "user not found" {
             writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
             return
+        }
+        var pqErr *pq.Error
+        if errors.As(err, &pqErr) {
+            // 23503 = foreign_key_violation (e.g. user is referenced by user_roles or other tables)
+            if string(pqErr.Code) == "23503" {
+                writeJSONErrorResponse(w, http.StatusConflict, "user_in_use", "User cannot be deleted because it is referenced by other records")
+                return
+            }
         }
         writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_user_failed", "Failed to delete user")
         return

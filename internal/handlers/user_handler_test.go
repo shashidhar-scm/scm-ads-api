@@ -71,7 +71,7 @@ func (e *mockErr) Error() string { return e.s }
 
 func TestDeleteUserNotFoundReturnsJSON(t *testing.T) {
 	repo := &mockUserRepo{users: map[string]*models.User{}}
-	h := NewUserHandler(repo)
+	h := NewUserHandler(repo, nil)
 
 	r := chi.NewRouter()
 	r.Delete("/users/{id}", h.DeleteUser)
@@ -94,7 +94,7 @@ func TestDeleteUserNotFoundReturnsJSON(t *testing.T) {
 
 func TestUpdateUserReturnsJSON(t *testing.T) {
 	repo := &mockUserRepo{users: map[string]*models.User{"u1": {ID: "u1", Email: "a@b.com", CreatedAt: time.Now().UTC()}}}
-	h := NewUserHandler(repo)
+	h := NewUserHandler(repo, nil)
 
 	r := chi.NewRouter()
 	r.Put("/users/{id}", h.UpdateUser)

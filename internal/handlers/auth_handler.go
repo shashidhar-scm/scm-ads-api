@@ -277,6 +277,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
 			return
 		}
+
+		// Best-effort update of last login timestamp.
+		if _, err := h.db.ExecContext(r.Context(), `UPDATE users SET last_login_at = NOW() AT TIME ZONE 'UTC' WHERE id = $1`, u.ID); err != nil {
+			log.Printf("login: failed to update last_login_at for user_id=%s: %v", u.ID, err)
+		} else {
+			now := time.Now().UTC()
+			u.LastLoginAt = &now
+		}
 	}
 
 	now := time.Now().UTC()
@@ -285,23 +293,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"email": u.Email,
 		"iat":   now.Unix(),
 		"exp":   now.Add(time.Duration(expiresIn) * time.Second).Unix(),
-	}
-
-	// If the user has scoped advertiser assignments, include advertiser_ids claim
-	if h.userRoles != nil {
-		advIDs, err := h.userRoles.ListScopedAdvertiserIDs(r.Context(), u.ID)
-		if err == nil {
-			var cleaned []string
-			for _, id := range advIDs {
-				id = strings.TrimSpace(id)
-				if id != "" {
-					cleaned = append(cleaned, id)
-				}
-			}
-			if len(cleaned) > 0 {
-				claims["advertiser_ids"] = cleaned
-			}
-		}
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(h.cfg.JWTSecret))
@@ -319,6 +310,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Name:        u.Name,
 		UserName:    u.UserName,
 		PhoneNumber: u.PhoneNumber,
+		LastLoginAt: u.LastLoginAt,
 		Roles:       roles,
 	})
 }

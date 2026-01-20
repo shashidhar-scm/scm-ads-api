@@ -42,43 +42,53 @@ func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
 	query := `
-		SELECT id, email, name, user_name, phone_number, password_hash, created_at
+		SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at
 		FROM users
 		WHERE id = $1
 	`
 
 	var u models.User
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &u.CreatedAt)
+	var lastLoginAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
+	}
+	if lastLoginAt.Valid {
+		v := lastLoginAt.Time
+		u.LastLoginAt = &v
 	}
 	return &u, nil
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	query := `
-		SELECT id, email, name, user_name, phone_number, password_hash, created_at
+		SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at
 		FROM users
 		WHERE email = $1
 	`
 
 	var u models.User
-	err := r.db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &u.CreatedAt)
+	var lastLoginAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
 	}
+	if lastLoginAt.Valid {
+		v := lastLoginAt.Time
+		u.LastLoginAt = &v
+	}
 	return &u, nil
 }
 
 func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string) (*models.User, error) {
 	query := `
-		SELECT id, email, name, user_name, phone_number, password_hash, created_at
+		SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at
 		FROM users
 		WHERE LOWER(email) = LOWER($1)
 		   OR LOWER(user_name) = LOWER($1)
@@ -87,19 +97,24 @@ func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string)
 	`
 
 	var u models.User
-	err := r.db.QueryRowContext(ctx, query, identifier).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &u.CreatedAt)
+	var lastLoginAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, query, identifier).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
 	}
+	if lastLoginAt.Valid {
+		v := lastLoginAt.Time
+		u.LastLoginAt = &v
+	}
 	return &u, nil
 }
 
 func (r *userRepository) List(ctx context.Context, limit int, offset int) ([]models.User, error) {
 	query := `
-		SELECT id, email, name, user_name, phone_number, created_at
+		SELECT id, email, name, user_name, phone_number, last_login_at, created_at
 		FROM users
 		ORDER BY created_at DESC
 	`
@@ -125,8 +140,13 @@ func (r *userRepository) List(ctx context.Context, limit int, offset int) ([]mod
 	var users []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.CreatedAt); err != nil {
+		var lastLoginAt sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &lastLoginAt, &u.CreatedAt); err != nil {
 			return nil, err
+		}
+		if lastLoginAt.Valid {
+			v := lastLoginAt.Time
+			u.LastLoginAt = &v
 		}
 		users = append(users, u)
 	}

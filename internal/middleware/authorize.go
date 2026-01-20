@@ -36,63 +36,41 @@ func RequirePermission(db *sql.DB, permission string) func(http.Handler) http.Ha
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return
 			}
-			if isSuper {
+			isAdmin, err := ur.IsAdmin(r.Context(), userID)
+			if err != nil {
+				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
+				return
+			}
+			if isSuper || isAdmin {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// First, allow via global (non-scoped) role.
+			// Permission must be granted by a global role (super_admin/admin bypassed above).
 			ok, err := ur.HasPermission(r.Context(), userID, permission, nil)
-			if err != nil {
-				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
-				return
-			}
-			if ok {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			allowedAdvertisers, _ := r.Context().Value(CtxAdvertiserIDs).([]string)
-			if len(allowedAdvertisers) == 0 {
-				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
-				return
-			}
-
-			hasScoped, err := ur.HasPermissionInAnyScope(r.Context(), userID, permission)
-			if err != nil {
-				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
-				return
-			}
-			if !hasScoped {
-				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
-				return
-			}
-
-			selectedAdvertiserID := strings.TrimSpace(r.Header.Get("X-Advertiser-Id"))
-			if selectedAdvertiserID == "" {
-				writeAuthzError(w, http.StatusBadRequest, "advertiser_not_selected", "missing X-Advertiser-Id")
-				return
-			}
-			isAllowed := false
-			for _, id := range allowedAdvertisers {
-				if selectedAdvertiserID == id {
-					isAllowed = true
-					break
-				}
-			}
-			if !isAllowed {
-				writeAuthzError(w, http.StatusForbidden, "forbidden", "invalid advertiser scope")
-				return
-			}
-
-			advertiserScope := &selectedAdvertiserID
-			ok, err = ur.HasPermission(r.Context(), userID, permission, advertiserScope)
 			if err != nil {
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return
 			}
 			if !ok {
 				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
+				return
+			}
+
+			// For advertiser users, scope is determined by advertiser ownership (advertisers.created_by).
+			selectedAdvertiserID := strings.TrimSpace(r.Header.Get("X-Advertiser-Id"))
+			if selectedAdvertiserID == "" {
+				writeAuthzError(w, http.StatusBadRequest, "advertiser_not_selected", "missing X-Advertiser-Id")
+				return
+			}
+
+			var owned bool
+			if err := db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM advertisers WHERE id = $1 AND created_by = $2)`, selectedAdvertiserID, userID).Scan(&owned); err != nil {
+				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to validate advertiser scope")
+				return
+			}
+			if !owned {
+				writeAuthzError(w, http.StatusForbidden, "forbidden", "invalid advertiser scope")
 				return
 			}
 
@@ -118,7 +96,12 @@ func RequirePermissionNoAdvertiserSelection(db *sql.DB, permission string) func(
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return
 			}
-			if isSuper {
+			isAdmin, err := ur.IsAdmin(r.Context(), userID)
+			if err != nil {
+				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
+				return
+			}
+			if isSuper || isAdmin {
 				ctx := context.WithValue(r.Context(), CtxPermissionGlobal, true)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -129,68 +112,12 @@ func RequirePermissionNoAdvertiserSelection(db *sql.DB, permission string) func(
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return
 			}
-
-			allowedAdvertisers, _ := r.Context().Value(CtxAdvertiserIDs).([]string)
-			if ok {
-				// If the token carries advertiser scopes, prefer scoped behavior (Option A):
-				// list endpoints should be filtered to those scopes instead of returning all data.
-				if len(allowedAdvertisers) == 0 {
-					// For advertisers.read, do not return the full advertiser list to non-super users
-					// just because they have a global role. Treat as scoped with an empty set.
-					if permission == "advertisers.read" {
-						ctx := r.Context()
-						ctx = context.WithValue(ctx, CtxAdvertiserIDs, []string{})
-						ctx = context.WithValue(ctx, CtxPermissionGlobal, false)
-						next.ServeHTTP(w, r.WithContext(ctx))
-						return
-					}
-
-					ctx := context.WithValue(r.Context(), CtxPermissionGlobal, true)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-				// Fall through to scoped path below to filter advertiser_ids to ones that truly have this permission.
-			}
-
-			if len(allowedAdvertisers) == 0 {
+			if !ok {
 				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
 				return
 			}
 
-			hasScoped, err := ur.HasPermissionInAnyScope(r.Context(), userID, permission)
-			if err != nil {
-				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
-				return
-			}
-			if !hasScoped {
-				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
-				return
-			}
-
-			var permitted []string
-			for _, advID := range allowedAdvertisers {
-				id := strings.TrimSpace(advID)
-				if id == "" {
-					continue
-				}
-				adv := id
-				ok, err := ur.HasPermission(r.Context(), userID, permission, &adv)
-				if err != nil {
-					writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
-					return
-				}
-				if ok {
-					permitted = append(permitted, id)
-				}
-			}
-			if len(permitted) == 0 {
-				writeAuthzError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
-				return
-			}
-
-			ctx := r.Context()
-			ctx = context.WithValue(ctx, CtxAdvertiserIDs, permitted)
-			ctx = context.WithValue(ctx, CtxPermissionGlobal, false)
+			ctx := context.WithValue(r.Context(), CtxPermissionGlobal, true)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

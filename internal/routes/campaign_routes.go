@@ -17,11 +17,11 @@ func RegisterCampaignRoutes(router chi.Router, db *sql.DB, popBaseURL string) {
 
     campaignRepo := repository.NewCampaignRepository(db)
     popClient := services.NewPopClient(popBaseURL)
-    campaignHandler := handlers.NewCampaignHandlerWithPop(campaignRepo, popClient)
+    campaignHandler := handlers.NewCampaignHandlerWithPop(campaignRepo, popClient, db)
 
     router.Route("/campaigns", func(r chi.Router) {
-        r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/search", campaignHandler.SearchCampaigns)
-        r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/", campaignHandler.ListCampaigns)
+        r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "campaigns.read")).Get("/search", campaignHandler.SearchCampaigns)
+        r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "campaigns.read")).Get("/", campaignHandler.ListCampaigns)
         r.With(authmw.RequirePermission(db, "campaigns.read")).Get("/advertiser/{advertiserID}", campaignHandler.ListCampaignsByAdvertiser)
         r.With(authmw.RequirePermission(db, "campaigns.write")).Post("/", func(w http.ResponseWriter, r *http.Request) {
             log.Println("POST /campaigns endpoint hit")

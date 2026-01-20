@@ -21,6 +21,7 @@ import (
     "github.com/google/uuid"
     "scm/internal/config"
     "scm/internal/interfaces"
+    "scm/internal/middleware"
     "scm/internal/models"
     "scm/internal/repository"
 )
@@ -34,10 +35,11 @@ type CreativeHandler struct {
     validator *validator.Validate
     bucket    string
     publicBaseURL string
+	db        *sql.DB
 }
 
 
-func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config) *CreativeHandler {
+func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config, db *sql.DB) *CreativeHandler {
     return &CreativeHandler{
         repo:      repo,
         campaignRepo: campaignRepo,
@@ -45,6 +47,7 @@ func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfa
         bucket:    s3Config.Bucket,
         publicBaseURL: s3Config.PublicBaseURL,
         validator: validator.New(),
+		db:        db,
     }
 }
 
@@ -325,7 +328,20 @@ func (h *CreativeHandler) SearchCreatives(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	creatives, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset)
+	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin := false
+	var createdByFilter *string
+	if h.db != nil && strings.TrimSpace(userID) != "" {
+		ur := repository.NewUserRoleRepository(h.db)
+		isSuper, _ := ur.IsSuperAdmin(r.Context(), userID)
+		isAdmin, _ := ur.IsAdmin(r.Context(), userID)
+		isGlobalAdmin = isSuper || isAdmin
+	}
+	if !isGlobalAdmin && strings.TrimSpace(userID) != "" {
+		createdByFilter = &userID
+	}
+
+	creatives, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset, createdByFilter)
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_creatives_failed", "Failed to search creatives")
 		return
@@ -354,14 +370,27 @@ func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	total, err := h.repo.CountAll(r.Context())
+	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin := false
+	var createdByFilter *string
+	if h.db != nil && strings.TrimSpace(userID) != "" {
+		ur := repository.NewUserRoleRepository(h.db)
+		isSuper, _ := ur.IsSuperAdmin(r.Context(), userID)
+		isAdmin, _ := ur.IsAdmin(r.Context(), userID)
+		isGlobalAdmin = isSuper || isAdmin
+	}
+	if !isGlobalAdmin && strings.TrimSpace(userID) != "" {
+		createdByFilter = &userID
+	}
+
+	total, err := h.repo.CountAll(r.Context(), createdByFilter)
 	if err != nil {
 		log.Printf("Failed to count creatives: %v", err)
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
 		return
 	}
 
-    creatives, err := h.repo.ListAll(r.Context(), p.limit, p.offset)
+    creatives, err := h.repo.ListAll(r.Context(), p.limit, p.offset, createdByFilter)
     if err != nil {
         log.Printf("Failed to list creatives: %v", err)
         writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")

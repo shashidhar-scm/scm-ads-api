@@ -43,7 +43,6 @@ type SetRolePermissionsRequest struct {
 
 type UserRoleAssignment struct {
 	RoleID       string  `json:"role_id" validate:"required"`
-	AdvertiserID *string `json:"advertiser_id"`
 }
 
 type SetUserRolesRequest struct {

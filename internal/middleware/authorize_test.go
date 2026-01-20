@@ -16,9 +16,14 @@ func TestRequirePermission_SuperAdminBypass(t *testing.T) {
 	}
 	defer db.Close()
 
+	// IsSuperAdmin
 	mock.ExpectQuery("SELECT EXISTS\\(").
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	// IsAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	h := RequirePermission(db, "roles.read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -37,24 +42,19 @@ func TestRequirePermission_SuperAdminBypass(t *testing.T) {
 	}
 }
 
-func TestRequirePermission_AdvertiserIDsButNoScopedPermissionReturns403(t *testing.T) {
+func TestRequirePermission_ForbiddenWhenNoPermission(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read", nil).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// IsSuperAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// IsAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// HasPermission global
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1", "roles.read").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	h := RequirePermission(db, "roles.read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -62,7 +62,6 @@ func TestRequirePermission_AdvertiserIDsButNoScopedPermissionReturns403(t *testi
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(context.WithValue(req.Context(), CtxUserID, "user-1"))
-	req = req.WithContext(context.WithValue(req.Context(), CtxAdvertiserIDs, []string{"adv-1"}))
 	rr := httptest.NewRecorder()
 
 	h.ServeHTTP(rr, req)
@@ -74,29 +73,22 @@ func TestRequirePermission_AdvertiserIDsButNoScopedPermissionReturns403(t *testi
 	}
 }
 
-func TestRequirePermission_UsesAdvertiserScopeWhenPresent(t *testing.T) {
+func TestRequirePermission_InvalidAdvertiserScopeReturns403(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read", nil).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
+	// IsSuperAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// IsAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// HasPermission global
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1", "roles.read").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	advID := "550e8400-e29b-41d4-a716-446655440000"
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read", advID).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// ownership check
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(advID, "user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	h := RequirePermission(db, "roles.read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -104,7 +96,6 @@ func TestRequirePermission_UsesAdvertiserScopeWhenPresent(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(context.WithValue(req.Context(), CtxUserID, "user-1"))
-	req = req.WithContext(context.WithValue(req.Context(), CtxAdvertiserIDs, []string{advID}))
 	req.Header.Set("X-Advertiser-Id", advID)
 	rr := httptest.NewRecorder()
 
@@ -124,17 +115,12 @@ func TestRequirePermission_MissingAdvertiserSelectionReturns400(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read", nil).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	// IsSuperAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// IsAdmin
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// HasPermission global
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs("user-1", "roles.read").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	h := RequirePermission(db, "roles.read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -142,7 +128,6 @@ func TestRequirePermission_MissingAdvertiserSelectionReturns400(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(context.WithValue(req.Context(), CtxUserID, "user-1"))
-	req = req.WithContext(context.WithValue(req.Context(), CtxAdvertiserIDs, []string{"adv-1"}))
 	rr := httptest.NewRecorder()
 
 	h.ServeHTTP(rr, req)
@@ -161,12 +146,17 @@ func TestRequirePermission_Forbidden(t *testing.T) {
 	}
 	defer db.Close()
 
+	// IsSuperAdmin
 	mock.ExpectQuery("SELECT EXISTS\\(").
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
+	// IsAdmin
 	mock.ExpectQuery("SELECT EXISTS\\(").
-		WithArgs("user-1", "roles.read", nil).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// HasPermission global
+	mock.ExpectQuery("SELECT EXISTS\\(").
+		WithArgs("user-1", "roles.read").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	h := RequirePermission(db, "roles.read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

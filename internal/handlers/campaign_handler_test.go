@@ -30,7 +30,7 @@ func (m *mockPopAPI) CampaignImpressions(ctx context.Context, campaignID string)
 }
 
 func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
-	h := NewCampaignHandler(&mockCampaignRepo{})
+	h := NewCampaignHandler(&mockCampaignRepo{}, nil)
 	r := chi.NewRouter()
 	r.Get("/campaigns/advertiser/{advertiserID}", h.ListCampaignsByAdvertiser)
 
@@ -62,7 +62,7 @@ func TestListCampaignsIncludesLifetimeImpressionsWhenRequested(t *testing.T) {
 	pop := &mockPopAPI{byCampaignID: map[string]*services.CampaignImpressions{
 		"c1": {CampaignID: "c1", Impressions: 123},
 	}}
-	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop)
+	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop, nil)
 	r := chi.NewRouter()
 	r.Get("/campaigns", h.ListCampaigns)
 
@@ -105,7 +105,7 @@ func TestListCampaignsDoesNotIncludeLifetimeImpressionsByDefault(t *testing.T) {
 	pop := &mockPopAPI{byCampaignID: map[string]*services.CampaignImpressions{
 		"c1": {CampaignID: "c1", Impressions: 123},
 	}}
-	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop)
+	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop, nil)
 	r := chi.NewRouter()
 	r.Get("/campaigns", h.ListCampaigns)
 
@@ -153,7 +153,7 @@ func (m *mockCampaignRepo) Count(ctx context.Context, filter interfaces.Campaign
 func (m *mockCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
 }
-func (m *mockCampaignRepo) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Campaign, int, error) {
+func (m *mockCampaignRepo) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Campaign, int, error) {
 	return []*models.Campaign{}, 0, nil
 }
 func (m *mockCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error) {
@@ -186,7 +186,7 @@ func (m *mockCampaignRepoWithCampaigns) Count(ctx context.Context, filter interf
 func (m *mockCampaignRepoWithCampaigns) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
 }
-func (m *mockCampaignRepoWithCampaigns) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Campaign, int, error) {
+func (m *mockCampaignRepoWithCampaigns) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Campaign, int, error) {
 	term = strings.TrimSpace(term)
 	if term == "" {
 		return []*models.Campaign{}, 0, nil
@@ -209,7 +209,7 @@ func (m *mockCampaignRepoWithCampaigns) ListByEndDate(ctx context.Context, endDa
 }
 
 func TestGetCampaignNotFoundReturnsJSON(t *testing.T) {
-	h := NewCampaignHandler(&mockCampaignRepo{})
+	h := NewCampaignHandler(&mockCampaignRepo{}, nil)
 	r := chi.NewRouter()
 	r.Get("/campaigns/{id}", h.GetCampaign)
 

@@ -5,21 +5,22 @@ import (
 
     "github.com/go-chi/chi/v5"
     "scm/internal/handlers"
+	authmw "scm/internal/middleware"
     "scm/internal/repository"
 )
 
 func RegisterUserRoutes(router chi.Router, db *sql.DB) {
     userRepo := repository.NewUserRepository(db)
-    userHandler := handlers.NewUserHandler(userRepo)
+    userHandler := handlers.NewUserHandler(userRepo, db)
 
     router.Route("/users", func(r chi.Router) {
-        r.Get("/", userHandler.ListUsers)
+		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.read")).Get("/", userHandler.ListUsers)
 
-        r.Route("/{id}", func(r chi.Router) {
-            r.Get("/", userHandler.GetUser)
-            r.Put("/", userHandler.UpdateUser)
-            r.Put("/password", userHandler.ChangePassword)
-            r.Delete("/", userHandler.DeleteUser)
-        })
+		r.Route("/{id}", func(r chi.Router) {
+			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.read")).Get("/", userHandler.GetUser)
+			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.write")).Put("/", userHandler.UpdateUser)
+			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.write")).Put("/password", userHandler.ChangePassword)
+			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.write")).Delete("/", userHandler.DeleteUser)
+		})
     })
 }
