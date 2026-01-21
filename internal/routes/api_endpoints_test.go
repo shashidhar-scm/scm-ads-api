@@ -84,6 +84,7 @@ func TestAPIv1EndpointsAreWired(t *testing.T) {
 		// Protected: Creatives
 		{name: "creatives search", method: http.MethodGet, path: "/api/v1/creatives/search?query=x", protected: true, wantStatus: http.StatusUnauthorized},
 		{name: "creatives list", method: http.MethodGet, path: "/api/v1/creatives/", protected: true, wantStatus: http.StatusUnauthorized},
+		{name: "creatives suggestions", method: http.MethodPost, path: "/api/v1/creatives/suggestions", protected: true, wantStatus: http.StatusUnauthorized},
 		{name: "creatives upload", method: http.MethodPost, path: "/api/v1/creatives/upload", protected: true, wantStatus: http.StatusUnauthorized},
 		{name: "creatives by campaign", method: http.MethodGet, path: "/api/v1/creatives/campaign/c1", protected: true, wantStatus: http.StatusUnauthorized},
 		{name: "creatives get", method: http.MethodGet, path: "/api/v1/creatives/cr1/", protected: true, wantStatus: http.StatusUnauthorized},

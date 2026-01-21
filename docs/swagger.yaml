@@ -211,6 +211,37 @@ definitions:
     - name
     - type
     type: object
+  models.CreativeFileSuggestionResult:
+    properties:
+      error:
+        type: string
+      extracted_text:
+        type: string
+      file_name:
+        type: string
+      keywords:
+        items:
+          type: string
+        type: array
+      status:
+        type: string
+      suggestions:
+        items:
+          $ref: '#/definitions/models.VenueSuggestion'
+        type: array
+    type: object
+  models.CreativeSuggestionsData:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/models.CreativeFileSuggestionResult'
+        type: array
+    type: object
+  models.CreativeSuggestionsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/models.CreativeSuggestionsData'
+    type: object
   models.CreativeType:
     enum:
     - image
@@ -636,6 +667,23 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  models.VenueSuggestion:
+    properties:
+      matched_sub_categories:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      reasons:
+        items:
+          type: string
+        type: array
+      score:
+        type: number
+      venue_id:
+        type: integer
     type: object
   models.VenueUpdateRequest:
     properties:
@@ -1537,6 +1585,43 @@ paths:
       security:
       - BearerAuth: []
       summary: Search creatives
+      tags:
+      - Creatives
+  /api/v1/creatives/suggestions:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Creative image files
+        in: formData
+        name: files
+        required: true
+        type: file
+      - default: 5
+        description: Maximum venues to return per file
+        in: formData
+        name: top_k
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.CreativeSuggestionsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Suggest venues for creatives based on poster content
       tags:
       - Creatives
   /api/v1/creatives/upload:

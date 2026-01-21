@@ -1177,6 +1177,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/creatives/suggestions": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Creatives"
+                ],
+                "summary": "Suggest venues for creatives based on poster content",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Creative image files",
+                        "name": "files",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum venues to return per file",
+                        "name": "top_k",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CreativeSuggestionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/creatives/upload": {
             "post": {
                 "security": [
@@ -3870,6 +3927,54 @@ const docTemplate = `{
                 }
             }
         },
+        "models.CreativeFileSuggestionResult": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "extracted_text": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.VenueSuggestion"
+                    }
+                }
+            }
+        },
+        "models.CreativeSuggestionsData": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.CreativeFileSuggestionResult"
+                    }
+                }
+            }
+        },
+        "models.CreativeSuggestionsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/models.CreativeSuggestionsData"
+                }
+            }
+        },
         "models.CreativeType": {
             "type": "string",
             "enum": [
@@ -4511,6 +4616,32 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "models.VenueSuggestion": {
+            "type": "object",
+            "properties": {
+                "matched_sub_categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "score": {
+                    "type": "number"
+                },
+                "venue_id": {
+                    "type": "integer"
                 }
             }
         },

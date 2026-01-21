@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"mime/multipart"
+	"net/textproto"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,5 +95,110 @@ func TestUploadCreativeMissingCampaignIDReturnsJSON(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("expected application/json got %q", ct)
+	}
+}
+
+func TestScoreVenuesReturnsMatches(t *testing.T) {
+	venues := []*models.Venue{
+		{ID: 16, Name: "Education", SubCategory: []string{"Schools", "Colleges and Universities"}},
+		{ID: 10, Name: "Residential", SubCategory: []string{"Apartment Buildings"}},
+	}
+
+	suggestions, keywords := scoreVenues(venues, "Summer camp registration at colleges", 5)
+	if len(keywords) == 0 {
+		t.Fatalf("expected keywords")
+	}
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions")
+	}
+	if suggestions[0].VenueID != 16 {
+		t.Fatalf("expected top suggestion Education(16), got %+v", suggestions[0])
+	}
+}
+
+func TestScoreVenuesMatchesRealTaxonomy(t *testing.T) {
+	venues := []*models.Venue{
+		{ID: 16, Name: "Education", SubCategory: []string{"Schools", "Colleges and Universities"}},
+		{ID: 15, Name: "Entertainment", SubCategory: []string{"Recreational Locations", "Sports Entertainment"}},
+		{ID: 8, Name: "Transit", SubCategory: []string{"Airports", "Buses"}},
+	}
+
+	text := "Parks & Recreation Summer Camps Summer Sports Clinics"
+	suggestions, _ := scoreVenues(venues, text, 5)
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions, got none")
+	}
+	// Should include at least Education (camp->school->Schools) or Entertainment (recreation/parks->recreational)
+	found := false
+	for _, s := range suggestions {
+		if s.VenueID == 16 || s.VenueID == 15 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Education or Entertainment in suggestions, got %+v", suggestions)
+	}
+}
+
+func TestScoreVenuesRetailAndFamilyIntentBoosts(t *testing.T) {
+	venues := []*models.Venue{
+		{ID: 9, Name: "Retail", SubCategory: []string{"Grocery", "Malls", "Pharmacies"}},
+		{ID: 10, Name: "Residential", SubCategory: []string{"Apartment Buildings"}},
+		{ID: 15, Name: "Entertainment", SubCategory: []string{"QSR", "Recreational Locations"}},
+		{ID: 14, Name: "Financial", SubCategory: []string{"Banks"}},
+	}
+
+	text := "New & only at Target. Start potty training with training pants"
+	suggestions, _ := scoreVenues(venues, text, 5)
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions")
+	}
+	// Retail should be present due to retail intent phrase
+	foundRetail := false
+	foundResidential := false
+	for _, s := range suggestions {
+		if s.VenueID == 9 {
+			foundRetail = true
+		}
+		if s.VenueID == 10 {
+			foundResidential = true
+		}
+	}
+	if !foundRetail {
+		t.Fatalf("expected Retail in suggestions, got %+v", suggestions)
+	}
+	if !foundResidential {
+		t.Fatalf("expected Residential in suggestions, got %+v", suggestions)
+	}
+}
+
+func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
+	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/creatives/suggestions", nil)
+	w := httptest.NewRecorder()
+	h.SuggestVenues(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d (%s)", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected application/json got %q", ct)
+	}
+}
+
+func TestSuggestVenuesUnsupportedContentTypeReturnsFileError(t *testing.T) {
+	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil)
+
+	form := &multipart.Form{File: map[string][]*multipart.FileHeader{}}
+	fh := &multipart.FileHeader{Filename: "x.txt", Header: textproto.MIMEHeader{}}
+	fh.Header.Set("Content-Type", "text/plain")
+	form.File["files"] = []*multipart.FileHeader{fh}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/creatives/suggestions", nil)
+	req.MultipartForm = form
+	w := httptest.NewRecorder()
+	h.SuggestVenues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
 	}
 }
