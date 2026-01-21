@@ -23,7 +23,9 @@ data:
   CITYPOST_CONSOLE_AUTH_SCHEME: "Token"
   RATE_LIMIT_WINDOW_SECONDS: "60"
   RATE_LIMIT_MAX: "50"
-  VERSION: "0.0.18"
+  VERSION: "0.0.56"
+  DASHBOARD_BASE_URL: "https://pivotal-cms.web.app/login"
+  POP_IMPRESSIONS_SYNC_INTERVAL_SECONDS: "30"
 kind: ConfigMap
 metadata:
   name: scm-ads-api
@@ -50,7 +52,7 @@ spec:
     spec:
       containers:
       - name: scm-ads-api
-        image: smartcitymedia/scm-ads-api:0.0.18
+        image: smartcitymedia/scm-ads-api:0.0.56
         envFrom:
           - configMapRef:
               name: scm-ads-api
