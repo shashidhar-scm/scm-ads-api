@@ -71,12 +71,16 @@ definitions:
         type: integer
       name:
         type: string
+      served_impressions:
+        type: integer
       spent:
         type: number
       start_date:
         type: string
       status:
         $ref: '#/definitions/models.CampaignStatus'
+      total_impressions:
+        type: integer
       updated_at:
         type: string
     required:
@@ -179,6 +183,8 @@ definitions:
       impressions_served:
         type: integer
       name:
+        type: string
+      rotation_group_id:
         type: string
       selected_days:
         items:
@@ -285,6 +291,8 @@ definitions:
       expires_in:
         type: integer
       id:
+        type: string
+      last_login_at:
         type: string
       name:
         type: string
@@ -529,6 +537,8 @@ definitions:
       name:
         minLength: 1
         type: string
+      rotation_group_name:
+        type: string
       selected_days:
         items:
           type: string
@@ -581,10 +591,16 @@ definitions:
         type: string
       id:
         type: string
+      last_login_at:
+        type: string
       name:
         type: string
       phone_number:
         type: string
+      roles:
+        items:
+          type: string
+        type: array
       user_name:
         type: string
     required:
@@ -592,8 +608,6 @@ definitions:
     type: object
   models.UserRoleAssignment:
     properties:
-      advertiser_id:
-        type: string
       role_id:
         type: string
     required:

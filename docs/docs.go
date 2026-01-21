@@ -3672,6 +3672,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "served_impressions": {
+                    "type": "integer"
+                },
                 "spent": {
                     "type": "number"
                 },
@@ -3680,6 +3683,9 @@ const docTemplate = `{
                 },
                 "status": {
                     "$ref": "#/definitions/models.CampaignStatus"
+                },
+                "total_impressions": {
+                    "type": "integer"
                 },
                 "updated_at": {
                     "type": "string"
@@ -3825,6 +3831,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "rotation_group_id": {
                     "type": "string"
                 },
                 "selected_days": {
@@ -3979,6 +3988,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "last_login_at": {
                     "type": "string"
                 },
                 "name": {
@@ -4346,6 +4358,9 @@ const docTemplate = `{
                     "type": "string",
                     "minLength": 1
                 },
+                "rotation_group_name": {
+                    "type": "string"
+                },
                 "selected_days": {
                     "type": "array",
                     "items": {
@@ -4431,11 +4446,20 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "last_login_at": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
                 "phone_number": {
                     "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "user_name": {
                     "type": "string"
@@ -4448,9 +4472,6 @@ const docTemplate = `{
                 "role_id"
             ],
             "properties": {
-                "advertiser_id": {
-                    "type": "string"
-                },
                 "role_id": {
                     "type": "string"
                 }
