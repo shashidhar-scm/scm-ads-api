@@ -3890,8 +3890,8 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "rotation_group_id": {
-                    "type": "string"
+                "play_weight": {
+                    "type": "integer"
                 },
                 "selected_days": {
                     "type": "array",
@@ -4135,23 +4135,6 @@ const docTemplate = `{
             }
         },
         "models.Permission": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.Project": {
             "type": "object",
             "properties": {
                 "ad_poster_frequency": {
@@ -4463,8 +4446,8 @@ const docTemplate = `{
                     "type": "string",
                     "minLength": 1
                 },
-                "rotation_group_name": {
-                    "type": "string"
+                "play_weight": {
+                    "type": "integer"
                 },
                 "selected_days": {
                     "type": "array",

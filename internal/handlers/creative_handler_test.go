@@ -2,17 +2,101 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/textproto"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"scm/internal/config"
 	"scm/internal/interfaces"
 	"scm/internal/models"
 )
+
+type rotationTestCreativeRepo struct {
+	creatives []*models.Creative
+	served    map[string]map[string]int
+}
+
+func (r *rotationTestCreativeRepo) Create(ctx context.Context, creative *models.Creative) error { return nil }
+func (r *rotationTestCreativeRepo) GetByID(ctx context.Context, id string) (*models.Creative, error) {
+	return nil, nil
+}
+func (r *rotationTestCreativeRepo) ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error) {
+	return []*models.Creative{}, nil
+}
+func (r *rotationTestCreativeRepo) CountAll(ctx context.Context, createdByUserID *string) (int, error) { return 0, nil }
+func (r *rotationTestCreativeRepo) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Creative, int, error) {
+	return []*models.Creative{}, 0, nil
+}
+func (r *rotationTestCreativeRepo) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
+	return []*models.Creative{}, nil
+}
+func (r *rotationTestCreativeRepo) CountByCampaign(ctx context.Context, campaignID string) (int, error) { return 0, nil }
+func (r *rotationTestCreativeRepo) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
+	return r.creatives, nil
+}
+func (r *rotationTestCreativeRepo) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {
+	return len(r.creatives), nil
+}
+func (r *rotationTestCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error { return nil }
+func (r *rotationTestCreativeRepo) Delete(ctx context.Context, id string) error { return nil }
+func (r *rotationTestCreativeRepo) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error) {
+	if len(candidateCreativeIDs) == 0 {
+		return "", nil
+	}
+	if r.served == nil {
+		r.served = make(map[string]map[string]int)
+	}
+	key := device + "|" + campaignID
+	if r.served[key] == nil {
+		r.served[key] = make(map[string]int)
+	}
+	weights := make(map[string]int, len(candidateCreativeIDs))
+	sumW := 0
+	for _, id := range candidateCreativeIDs {
+		w := 0
+		for _, c := range r.creatives {
+			if c != nil && c.ID == id {
+				w = c.PlayWeight
+				break
+			}
+		}
+		if w < 0 {
+			w = 0
+		}
+		weights[id] = w
+		sumW += w
+	}
+	if sumW <= 0 {
+		sumW = len(candidateCreativeIDs)
+		for _, id := range candidateCreativeIDs {
+			weights[id] = 1
+		}
+	}
+	// Deficit-based pick
+	totalServed := 0
+	for _, id := range candidateCreativeIDs {
+		totalServed += r.served[key][id]
+	}
+	projectedTotal := totalServed + 1
+	chosen := candidateCreativeIDs[0]
+	best := -1e9
+	for _, id := range candidateCreativeIDs {
+		expected := float64(projectedTotal) * float64(weights[id]) / float64(sumW)
+		deficit := expected - float64(r.served[key][id])
+		if deficit > best {
+			best = deficit
+			chosen = id
+		}
+	}
+	r.served[key][chosen]++
+	return chosen, nil
+}
 
 type noopCreativeRepo struct{}
 
@@ -40,11 +124,7 @@ func (noopCreativeRepo) CountByDevice(ctx context.Context, device string, active
 func (noopCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error { return nil }
 func (noopCreativeRepo) Delete(ctx context.Context, id string) error { return nil }
 
-func (noopCreativeRepo) EnsureRotationGroup(ctx context.Context, campaignID string, name string, selectedDays []string, timeSlots []string) (string, error) {
-	return "", nil
-}
-
-func (noopCreativeRepo) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, rotationGroupID string, candidateCreativeIDs []string) (string, error) {
+func (noopCreativeRepo) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error) {
 	if len(candidateCreativeIDs) == 0 {
 		return "", nil
 	}
@@ -200,5 +280,53 @@ func TestSuggestVenuesUnsupportedContentTypeReturnsFileError(t *testing.T) {
 	h.SuggestVenues(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestListCreativesByDeviceWeightedRotationPerCampaign(t *testing.T) {
+	baseTime := time.Date(2026, 1, 22, 0, 0, 0, 0, time.UTC)
+	repo := &rotationTestCreativeRepo{creatives: []*models.Creative{
+		{ID: "c1a", CampaignID: "camp1", PlayWeight: 75, UploadedAt: baseTime.Add(-2 * time.Hour)},
+		{ID: "c1b", CampaignID: "camp1", PlayWeight: 25, UploadedAt: baseTime.Add(-1 * time.Hour)},
+		{ID: "c2a", CampaignID: "camp2", PlayWeight: 100, UploadedAt: baseTime.Add(-3 * time.Hour)},
+	}}
+	h := NewCreativeHandler(repo, noopCampaignRepo{}, &config.S3Config{}, nil)
+
+	withDeviceParam := func(req *http.Request, device string) *http.Request {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("device", device)
+		return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	}
+
+	counts := map[string]int{"c1a": 0, "c1b": 0}
+	for i := 0; i < 100; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/creatives/device/dev1?page=1&page_size=50", nil)
+		req = withDeviceParam(req, "dev1")
+		w := httptest.NewRecorder()
+		h.ListCreativesByDevice(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Data []models.Creative `json:"data"`
+		}
+		if err := json.NewDecoder(strings.NewReader(w.Body.String())).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v (%s)", err, w.Body.String())
+		}
+		if len(resp.Data) != 2 {
+			t.Fatalf("expected 2 creatives (one per campaign), got %d (%s)", len(resp.Data), w.Body.String())
+		}
+		for _, c := range resp.Data {
+			if c.CampaignID == "camp1" {
+				counts[c.ID]++
+			}
+		}
+	}
+	// Allow small drift; deficit algorithm should be very close.
+	if counts["c1a"] < 70 || counts["c1a"] > 80 {
+		t.Fatalf("expected c1a around 75%%; got %d/100", counts["c1a"])
+	}
+	if counts["c1b"] < 20 || counts["c1b"] > 30 {
+		t.Fatalf("expected c1b around 25%%; got %d/100", counts["c1b"])
 	}
 }

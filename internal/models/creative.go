@@ -19,7 +19,7 @@ type Creative struct {
     Size         int64       `json:"size"`
     ImpressionCount *int64   `json:"impression_count,omitempty"`
     ImpressionsServed int64  `json:"impressions_served"`
-    RotationGroupID *string  `json:"rotation_group_id,omitempty"`
+    PlayWeight   int         `json:"play_weight" validate:"min=0"`
     CampaignID   string      `json:"campaign_id" validate:"required,uuid4"`
     SelectedDays []string    `json:"selected_days"`
     TimeSlots    []string    `json:"time_slots"`
@@ -30,6 +30,7 @@ type Creative struct {
 type CreateCreativeRequest struct {
     Name     string      `json:"name" validate:"required"`
     Type     CreativeType `json:"type" validate:"required,oneof=image video"`
+    PlayWeight *int       `json:"play_weight,omitempty" validate:"omitempty,min=0"`
 }
 
 type UpdateCreativeRequest struct {
@@ -39,9 +40,7 @@ type UpdateCreativeRequest struct {
     FilePath     *string      `json:"-"`
     Size         *int64       `json:"size,omitempty"`
     ImpressionCount *int64    `json:"impression_count,omitempty"`
-    RotationGroupName *string `json:"rotation_group_name,omitempty"`
-    RotationGroupID *string   `json:"-"`
-    ClearRotationGroup bool   `json:"-"`
+    PlayWeight   *int         `json:"play_weight,omitempty" validate:"omitempty,min=0"`
     SelectedDays *[]string    `json:"selected_days,omitempty"`
     TimeSlots    *[]string    `json:"time_slots,omitempty"`
     Devices      *[]string    `json:"devices,omitempty"`

@@ -197,3 +197,25 @@
 - Validate `/api/v1/projects` filtering semantics match expected behavior
 - Verify sync functionality with proper authentication
 - Consider adding more specific JSONB field queries if needed
+
+## 2026-01-22
+
+### Creatives: Venue Suggestions (OCR + venue taxonomy)
+- Added `POST /api/v1/creatives/suggestions` which accepts multipart image uploads, extracts text via AWS Rekognition (`DetectText`), and returns per-file venue suggestions.
+- Scoring uses venue `name` + `sub_category[]` with token normalization, synonym mapping, phrase matching, and intent boosts (e.g. retail intent phrases, family keywords).
+- Added tests covering scoring behavior and handler validation.
+- Documented endpoint in Swagger.
+
+### Rekognition production hardening
+- Added better runtime diagnostics for OCR failures:
+  - Server logs underlying Rekognition error.
+  - Response distinguishes likely configuration/credential errors (`ocr_not_configured`) vs runtime failures (`ocr_failed`).
+- Production requires `AWS_REGION` to be set (otherwise defaults to `us-east-1`). CloudTrail can be used to validate `rekognition:DetectText` calls.
+
+### Venue taxonomy tuning (data)
+- Recommended enriching `venues.sub_category` with alias tags/synonyms to improve match coverage without changing core venue categories.
+
+### GeoPath (future work)
+- GeoPath (geopath.org) explored as a future data source for audience-based kiosk recommendations.
+- Current device payload includes lat/lng under `device_config.position` and `device_config.LongLat`.
+- Planned path: map device lat/lng to GeoPath markets (polygons) and score devices using GeoPath audience indices + impressions; fallback uses existing geo filters + transit (GTFS) signals + POP/impressions proxies.

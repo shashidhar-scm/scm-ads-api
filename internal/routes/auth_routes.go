@@ -23,6 +23,7 @@ func RegisterAuthRoutes(router chi.Router, db *sql.DB, cfg *config.Config) {
 	router.Route("/auth", func(r chi.Router) {
 		r.Post("/signup", authHandler.Signup)
 		r.Post("/login", authHandler.Login)
+		r.Post("/google", authHandler.GoogleAuth)
 		r.Post("/forgot-password", authHandler.ForgotPassword)
 		r.Post("/reset-password", authHandler.ResetPassword)
 	})

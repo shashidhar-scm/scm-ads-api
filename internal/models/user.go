@@ -27,6 +27,10 @@ type LoginRequest struct {
 	Password   string `json:"password" validate:"required"`
 }
 
+type GoogleAuthRequest struct {
+	IDToken string `json:"id_token" validate:"required"`
+}
+
 type LoginRole struct {
 	Name         string  `json:"name"`
 	AdvertiserID *string `json:"advertiser_id"`

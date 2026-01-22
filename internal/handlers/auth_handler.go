@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -35,6 +38,63 @@ func writeJSONError(w http.ResponseWriter, status int, code string, message stri
 	})
 }
 
+func usernameBaseFromName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "user"
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			// drop
+		}
+	}
+	out := b.String()
+	if out == "" {
+		out = "user"
+	}
+	if len(out) > 24 {
+		out = out[:24]
+	}
+	return out
+}
+
+func (h *AuthHandler) generateUniqueUserName(ctx context.Context, base string) string {
+	base = strings.TrimSpace(strings.ToLower(base))
+	if base == "" {
+		base = "user"
+	}
+	if h.db == nil {
+		return base
+	}
+
+	// Try base, then base2..base99
+	for i := 0; i < 100; i++ {
+		candidate := base
+		if i > 0 {
+			candidate = base + strconv.Itoa(i+1)
+		}
+		// Keep within a safe length.
+		if len(candidate) > 30 {
+			candidate = candidate[:30]
+		}
+		var exists bool
+		err := h.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(user_name) = LOWER($1))`, candidate).Scan(&exists)
+		if err != nil {
+			return candidate
+		}
+		if !exists {
+			return candidate
+		}
+	}
+	return base + strconv.FormatInt(time.Now().Unix()%100000, 10)
+}
+
 func validationMessage(err error) string {
 	var verrs validator.ValidationErrors
 	if !errors.As(err, &verrs) {
@@ -59,6 +119,13 @@ type AuthHandler struct {
 	db     *sql.DB
 	cfg    *config.Config
 	v      *validator.Validate
+	googleVerify func(ctx context.Context, idToken string) (googleTokenClaims, error)
+	tempPassword func() (string, error)
+}
+
+type googleTokenClaims struct {
+	Email string
+	Name  string
 }
 
 func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender) *AuthHandler {
@@ -72,7 +139,301 @@ func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender)
 		db:     db,
 		cfg:    cfg,
 		v:      v,
+		googleVerify: func(ctx context.Context, idToken string) (googleTokenClaims, error) {
+			return verifyGoogleIDTokenWithTokenInfo(ctx, strings.TrimSpace(cfg.GoogleClientID), idToken)
+		},
+		tempPassword: generateTemporaryPassword,
 	}
+}
+
+func generateTemporaryPassword() (string, error) {
+	// Generate a strong temporary password: >= 16 chars with upper/lower/number/special.
+	// Avoid ambiguous characters to reduce support issues (e.g. 0 vs O, l vs I).
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+	const n = 18
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		out[i] = alphabet[int(buf[i])%len(alphabet)]
+	}
+	// Ensure required character classes.
+	return string(out) + "Aa1!", nil
+}
+
+func buildWelcomeEmailBody(name string, dashboardURL string, userName string, tempPassword *string, resetURL string, createdWithGoogle bool) string {
+	name = strings.TrimSpace(name)
+	dashboardURL = strings.TrimSpace(dashboardURL)
+	userName = strings.TrimSpace(userName)
+	resetURL = strings.TrimSpace(resetURL)
+
+	body := "<html><body style=\"font-family:Arial,sans-serif; color:#111;\">" +
+		"<h2 style=\"margin:0 0 12px 0;\">Welcome, " + name + "</h2>"
+
+	if createdWithGoogle {
+		body += "<p style=\"margin:0 0 16px 0;\">Your account was created using Google Sign-In.</p>"
+	} else {
+		body += "<p style=\"margin:0 0 16px 0;\">Your account has been created successfully.</p>" +
+			"<p style=\"margin:0 0 16px 0;\">You can log in using your <b>username</b>, <b>email</b>, or <b>phone number</b>.</p>" +
+			"<p style=\"margin:0 0 8px 0;\">Your username:</p>" +
+			"<p style=\"margin:0 0 16px 0; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;\">" + userName + "</p>"
+	}
+
+	if tempPassword != nil {
+		body += "<p style=\"margin:0 0 8px 0;\">Temporary password (only needed if you want to login without Google):</p>" +
+			"<p style=\"margin:0 0 16px 0; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;\">" + strings.TrimSpace(*tempPassword) + "</p>"
+	}
+
+	if dashboardURL != "" {
+		body += "<p style=\"margin:0 0 20px 0;\">Dashboard: <a href=\"" + dashboardURL + "\">" + dashboardURL + "</a></p>"
+	}
+	if tempPassword != nil && resetURL != "" {
+		body += "<p style=\"margin:0 0 16px 0;\">You can change your password anytime using \"Forgot password\": <a href=\"" + resetURL + "\">" + resetURL + "</a></p>"
+	}
+	body += "</body></html>"
+	return body
+}
+
+func verifyGoogleIDTokenWithTokenInfo(ctx context.Context, clientID string, idToken string) (googleTokenClaims, error) {
+	idToken = strings.TrimSpace(idToken)
+	if idToken == "" {
+		return googleTokenClaims{}, fmt.Errorf("id_token is required")
+	}
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return googleTokenClaims{}, fmt.Errorf("GOOGLE_CLIENT_ID is required")
+	}
+
+	u, err := url.Parse("https://oauth2.googleapis.com/tokeninfo")
+	if err != nil {
+		return googleTokenClaims{}, err
+	}
+	q := u.Query()
+	q.Set("id_token", idToken)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return googleTokenClaims{}, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return googleTokenClaims{}, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return googleTokenClaims{}, fmt.Errorf("google tokeninfo failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var out struct {
+		Email         string `json:"email"`
+		EmailVerified string `json:"email_verified"`
+		Name          string `json:"name"`
+		Aud           string `json:"aud"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return googleTokenClaims{}, fmt.Errorf("google tokeninfo: invalid json: %w", err)
+	}
+	if strings.TrimSpace(out.Aud) != clientID {
+		return googleTokenClaims{}, fmt.Errorf("google token aud mismatch")
+	}
+	if !strings.EqualFold(strings.TrimSpace(out.EmailVerified), "true") {
+		return googleTokenClaims{}, fmt.Errorf("google email not verified")
+	}
+	if strings.TrimSpace(out.Email) == "" {
+		return googleTokenClaims{}, fmt.Errorf("google token missing email")
+	}
+	return googleTokenClaims{Email: out.Email, Name: out.Name}, nil
+}
+
+func (h *AuthHandler) writeLoginResponse(w http.ResponseWriter, r *http.Request, u *models.User) {
+	expiresIn := h.cfg.JWTExpiresInSeconds
+	if expiresIn <= 0 {
+		expiresIn = 86400
+	}
+
+	var roles []models.LoginRole
+	if h.db != nil {
+		rows, err := h.db.QueryContext(r.Context(), `
+			SELECT ro.name, ur.advertiser_id
+			FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = $1
+			ORDER BY ro.name ASC, ur.advertiser_id ASC
+		`, u.ID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var advertiserID sql.NullString
+			if err := rows.Scan(&name, &advertiserID); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
+				return
+			}
+			var adv *string
+			if advertiserID.Valid {
+				v := advertiserID.String
+				adv = &v
+			}
+			roles = append(roles, models.LoginRole{Name: name, AdvertiserID: adv})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
+			return
+		}
+
+		// Best-effort update of last login timestamp.
+		if _, err := h.db.ExecContext(r.Context(), `UPDATE users SET last_login_at = NOW() AT TIME ZONE 'UTC' WHERE id = $1`, u.ID); err != nil {
+			log.Printf("login: failed to update last_login_at for user_id=%s: %v", u.ID, err)
+		} else {
+			now := time.Now().UTC()
+			u.LastLoginAt = &now
+		}
+	}
+
+	now := time.Now().UTC()
+	claims := jwt.MapClaims{
+		"sub":   u.ID,
+		"email": u.Email,
+		"iat":   now.Unix(),
+		"exp":   now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(h.cfg.JWTSecret))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "token_sign_failed", "Failed to login")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(models.LoginResponse{
+		AccessToken: signed,
+		ExpiresIn:   expiresIn,
+		ID:          u.ID,
+		Email:       u.Email,
+		Name:        u.Name,
+		UserName:    u.UserName,
+		PhoneNumber: u.PhoneNumber,
+		LastLoginAt: u.LastLoginAt,
+		Roles:       roles,
+	})
+}
+
+// @Tags Account
+// @Summary Login with Google
+// @Accept json
+// @Produce json
+// @Param body body models.GoogleAuthRequest true "Google auth request"
+// @Success 200 {object} models.LoginResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/google [post]
+func (h *AuthHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
+	var req models.GoogleAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "validation_error", validationMessage(err))
+		return
+	}
+	if h.googleVerify == nil {
+		writeJSONError(w, http.StatusInternalServerError, "google_not_configured", "Google auth is not configured")
+		return
+	}
+
+	claims, err := h.googleVerify(r.Context(), req.IDToken)
+	if err != nil {
+		if h.cfg != nil && h.cfg.AuthVerboseErrors {
+			writeJSONError(w, http.StatusUnauthorized, "invalid_google_token", err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusUnauthorized, "invalid_google_token", "Invalid Google token")
+		return
+	}
+
+	email := strings.TrimSpace(claims.Email)
+	if email == "" {
+		writeJSONError(w, http.StatusUnauthorized, "invalid_google_token", "Invalid Google token")
+		return
+	}
+
+	u, err := h.users.GetByEmail(r.Context(), email)
+	if err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+			writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+			return
+		}
+
+		tmp := ""
+		if h.tempPassword != nil {
+			pw, pErr := h.tempPassword()
+			if pErr != nil {
+				writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+				return
+			}
+			tmp = pw
+		}
+		if strings.TrimSpace(tmp) == "" {
+			writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+			return
+		}
+
+		hash, hErr := bcrypt.GenerateFromPassword([]byte(tmp), bcrypt.DefaultCost)
+		if hErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+			return
+		}
+
+		u = &models.User{
+			ID:           uuid.NewString(),
+			Email:        email,
+			Name:         strings.TrimSpace(claims.Name),
+			UserName:     h.generateUniqueUserName(r.Context(), usernameBaseFromName(claims.Name)),
+			PasswordHash: string(hash),
+			CreatedAt:    time.Now().UTC(),
+		}
+		if err := h.users.Create(r.Context(), u); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+			return
+		}
+
+		// Assign default global advertiser role.
+		if h.db != nil {
+			var roleID string
+			if err := h.db.QueryRowContext(r.Context(), `SELECT id FROM roles WHERE name = 'advertiser' LIMIT 1`).Scan(&roleID); err != nil {
+				_, _ = h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, u.ID)
+				writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+				return
+			}
+			if _, err := h.db.ExecContext(r.Context(), `INSERT INTO user_roles (user_id, role_id, advertiser_id) VALUES ($1, $2, NULL) ON CONFLICT DO NOTHING`, u.ID, roleID); err != nil {
+				_, _ = h.db.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, u.ID)
+				writeJSONError(w, http.StatusInternalServerError, "google_auth_failed", "Failed to login")
+				return
+			}
+		}
+
+		if h.mailer != nil {
+			subject := "Welcome to SCM Ads"
+			dashboardURL := strings.TrimSpace(h.cfg.DashboardBaseURL)
+			resetURL := strings.TrimSpace(h.cfg.AuthResetPasswordURL)
+			body := buildWelcomeEmailBody(u.Name, dashboardURL, "", &tmp, resetURL, true)
+			if err := h.mailer.Send(u.Email, subject, body); err != nil {
+				log.Printf("google-auth: failed to send temp password email to %s: %v", u.Email, err)
+			}
+		}
+	}
+
+	h.writeLoginResponse(w, r, u)
 }
 
 func strongPassword(fl validator.FieldLevel) bool {
@@ -181,16 +542,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	subject := "Welcome to SCM Ads"
 	dashboardURL := strings.TrimSpace(h.cfg.DashboardBaseURL)
-	body := "<html><body style=\"font-family:Arial,sans-serif; color:#111;\">" +
-		"<h2 style=\"margin:0 0 12px 0;\">Welcome, " + req.Name + "</h2>" +
-		"<p style=\"margin:0 0 16px 0;\">Your account has been created successfully.</p>" +
-		"<p style=\"margin:0 0 16px 0;\">You can log in using your <b>username</b>, <b>email</b>, or <b>phone number</b>.</p>" +
-		"<p style=\"margin:0 0 8px 0;\">Your username:</p>" +
-		"<p style=\"margin:0 0 16px 0;\"><b>Username:</b> " + req.UserName + "</p>"
-	if dashboardURL != "" {
-		body += "<p style=\"margin:0 0 20px 0;\">Dashboard: <a href=\"" + dashboardURL + "\">" + dashboardURL + "</a></p>"
-	}
-	body += "</body></html>"
+	body := buildWelcomeEmailBody(req.Name, dashboardURL, req.UserName, nil, "", false)
 	if err := h.mailer.Send(u.Email, subject, body); err != nil {
 		log.Printf("signup: failed to send welcome email to %s: %v", u.Email, err)
 	}
@@ -223,6 +575,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.users.GetByIdentifier(r.Context(), req.Identifier)
 	if err != nil {
+		log.Printf("login: identifier not found: %q (%v)", strings.TrimSpace(req.Identifier), err)
 		if h.cfg.AuthVerboseErrors {
 			writeJSONError(w, http.StatusUnauthorized, "invalid_identifier", "Email/username/phone not found")
 			return
@@ -232,6 +585,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
+		log.Printf("login: invalid password for user_id=%s identifier=%q", u.ID, strings.TrimSpace(req.Identifier))
 		if h.cfg.AuthVerboseErrors {
 			writeJSONError(w, http.StatusUnauthorized, "invalid_password", "Password is incorrect")
 			return

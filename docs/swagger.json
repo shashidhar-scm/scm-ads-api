@@ -3880,10 +3880,10 @@
                 "impressions_served": {
                     "type": "integer"
                 },
-                "name": {
-                    "type": "string"
+                "play_weight": {
+                    "type": "integer"
                 },
-                "rotation_group_id": {
+                "name": {
                     "type": "string"
                 },
                 "selected_days": {
@@ -4452,12 +4452,12 @@
                 "impression_count": {
                     "type": "integer"
                 },
+                "play_weight": {
+                    "type": "integer"
+                },
                 "name": {
                     "type": "string",
                     "minLength": 1
-                },
-                "rotation_group_name": {
-                    "type": "string"
                 },
                 "selected_days": {
                     "type": "array",

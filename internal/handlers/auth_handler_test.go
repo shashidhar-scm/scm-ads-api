@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +22,156 @@ import (
 )
 
 type noopMailer struct{}
+
+func TestGoogleAuthExistingUserSuccess(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("Password1!"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
+	}
+
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
+		WithArgs("g@b.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "last_login_at", "created_at"}).
+			AddRow("u1", "g@b.com", "G", "", "", string(hash), nil, time.Now().UTC()))
+
+	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).
+		WithArgs("u1").
+		WillReturnRows(sqlmock.NewRows([]string{"name", "advertiser_id"}).AddRow("advertiser", nil))
+
+	mock.ExpectExec(`UPDATE users SET last_login_at`).WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
+
+	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev", GoogleClientID: "cid"}, services.EmailSender(&noopMailer{}))
+	h.googleVerify = func(ctx context.Context, idToken string) (googleTokenClaims, error) {
+		return googleTokenClaims{Email: "g@b.com", Name: "G"}, nil
+	}
+
+	payload := map[string]any{"id_token": "tok"}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/google", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	h.GoogleAuth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if resp["access_token"] == nil {
+		t.Fatalf("expected access_token, got %v", resp)
+	}
+	if resp["roles"] == nil {
+		t.Fatalf("expected roles in response, got %v", resp)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestGoogleAuthCreatesUserAndAssignsRole(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	// User not found.
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
+		WithArgs("new@b.com").
+		WillReturnError(sql.ErrNoRows)
+
+	mock.ExpectQuery("INSERT INTO users").WillReturnRows(
+		sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now().UTC()),
+	)
+	mock.ExpectQuery("SELECT id FROM roles WHERE name = 'advertiser'").WillReturnRows(
+		sqlmock.NewRows([]string{"id"}).AddRow("role-adv"),
+	)
+	mock.ExpectExec("INSERT INTO user_roles").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	// Login response loads roles and updates last_login_at.
+	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"name", "advertiser_id"}).AddRow("advertiser", nil))
+	mock.ExpectExec(`UPDATE users SET last_login_at`).WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	m := &recordingMailer{}
+	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev", GoogleClientID: "cid", DashboardBaseURL: "https://dashboard.example", AuthResetPasswordURL: "https://reset.example"}, services.EmailSender(m))
+	h.googleVerify = func(ctx context.Context, idToken string) (googleTokenClaims, error) {
+		return googleTokenClaims{Email: "new@b.com", Name: "New"}, nil
+	}
+	h.tempPassword = func() (string, error) { return "TempPass1!", nil }
+
+	payload := map[string]any{"id_token": "tok"}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/google", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	h.GoogleAuth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if resp["access_token"] == nil {
+		t.Fatalf("expected access_token, got %v", resp)
+	}
+	if resp["roles"] == nil {
+		t.Fatalf("expected roles in response, got %v", resp)
+	}
+	if m.calls != 1 {
+		t.Fatalf("expected temp password email to be sent once, got %d", m.calls)
+	}
+	if m.to != "new@b.com" {
+		t.Fatalf("expected email to new@b.com, got %q", m.to)
+	}
+	if !strings.Contains(strings.ToLower(m.subject), "welcome") {
+		t.Fatalf("expected welcome subject, got %q", m.subject)
+	}
+	if !strings.Contains(m.body, "TempPass1!") {
+		t.Fatalf("expected temp password in email body, got %q", m.body)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestGoogleAuthInvalidToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev", GoogleClientID: "cid", AuthVerboseErrors: true}, services.EmailSender(&noopMailer{}))
+	h.googleVerify = func(ctx context.Context, idToken string) (googleTokenClaims, error) {
+		return googleTokenClaims{}, fmt.Errorf("bad token")
+	}
+
+	payload := map[string]any{"id_token": "tok"}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/google", bytes.NewReader(b))
+	w := httptest.NewRecorder()
+	h.GoogleAuth(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 got %d (%s)", w.Code, w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
 
 type recordingMailer struct {
 	to      string
@@ -243,7 +395,7 @@ func TestSignupSuccess(t *testing.T) {
 	if !strings.Contains(m.body, "https://dashboard.example") {
 		t.Fatalf("expected dashboard URL in email body, got %q", m.body)
 	}
-	if !strings.Contains(m.body, "Username") {
+	if !strings.Contains(strings.ToLower(m.body), "your username") {
 		t.Fatalf("expected username in email body, got %q", m.body)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -23,8 +24,7 @@ type CreativeRepository interface {
 	CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error)
 	Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error
 	Delete(ctx context.Context, id string) error
-	EnsureRotationGroup(ctx context.Context, campaignID string, name string, selectedDays []string, timeSlots []string) (string, error)
-	PickNextRotationalCreative(ctx context.Context, device string, campaignID string, rotationGroupID string, candidateCreativeIDs []string) (string, error)
+	PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error)
 }
 
 type creativeRepository struct {
@@ -38,15 +38,10 @@ func NewCreativeRepository(db *sql.DB) CreativeRepository {
 func (r *creativeRepository) Create(ctx context.Context, creative *models.Creative) error {
     query := `
         INSERT INTO creatives (
-            id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			id, name, type, url, file_path, size, impression_count, impressions_served, play_weight, campaign_id, selected_days, time_slots, devices, uploaded_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING uploaded_at
     `
-    
-    var rotationGroupID any
-    if creative.RotationGroupID != nil && strings.TrimSpace(*creative.RotationGroupID) != "" {
-        rotationGroupID = *creative.RotationGroupID
-    }
 
     err := r.db.QueryRowContext(
         ctx,
@@ -59,7 +54,7 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
         creative.Size,
         creative.ImpressionCount,
         creative.ImpressionsServed,
-        rotationGroupID,
+		creative.PlayWeight,
         creative.CampaignID,
         pq.Array(creative.SelectedDays),
         pq.Array(creative.TimeSlots),
@@ -72,14 +67,13 @@ func (r *creativeRepository) Create(ctx context.Context, creative *models.Creati
 
 func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Creative, error) {
     query := `
-        SELECT id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
+		SELECT id, name, type, url, file_path, size, impression_count, impressions_served, play_weight, campaign_id, selected_days, time_slots, devices, uploaded_at
         FROM creatives
         WHERE id = $1
     `
     
     var creative models.Creative
     var impressionCount sql.NullInt64
-    var rotationGroupID sql.NullString
     err := r.db.QueryRowContext(ctx, query, id).Scan(
         &creative.ID,
         &creative.Name,
@@ -89,7 +83,7 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         &creative.Size,
         &impressionCount,
         &creative.ImpressionsServed,
-        &rotationGroupID,
+		&creative.PlayWeight,
         &creative.CampaignID,
         pq.Array(&creative.SelectedDays),
         pq.Array(&creative.TimeSlots),
@@ -108,10 +102,6 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
         v := impressionCount.Int64
         creative.ImpressionCount = &v
     }
-	if rotationGroupID.Valid {
-		v := rotationGroupID.String
-		creative.RotationGroupID = &v
-	}
     return &creative, nil
 }
 
@@ -119,8 +109,8 @@ func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Cr
 func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served,
-			cr.rotation_group_id, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.play_weight,
+			cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
 		FROM creatives cr
 		JOIN campaigns ca ON ca.id = cr.campaign_id
 		JOIN advertisers a ON a.id = ca.advertiser_id
@@ -156,7 +146,6 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int,
     for rows.Next() {
         var creative models.Creative
         var impressionCount sql.NullInt64
-        var rotationGroupID sql.NullString
         if err := rows.Scan(
             &creative.ID,
             &creative.Name,
@@ -166,7 +155,7 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int,
             &creative.Size,
             &impressionCount,
             &creative.ImpressionsServed,
-            &rotationGroupID,
+			&creative.PlayWeight,
             &creative.CampaignID,
             pq.Array(&creative.SelectedDays),
             pq.Array(&creative.TimeSlots),
@@ -178,10 +167,6 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int,
         if impressionCount.Valid {
             v := impressionCount.Int64
             creative.ImpressionCount = &v
-        }
-        if rotationGroupID.Valid {
-            v := rotationGroupID.String
-            creative.RotationGroupID = &v
         }
         creatives = append(creatives, &creative)
     }
@@ -237,8 +222,8 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 
 	query := `
 		SELECT
-			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served,
-			cr.rotation_group_id, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.play_weight,
+			cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
 		FROM creatives cr
 		JOIN campaigns ca ON ca.id = cr.campaign_id
 		JOIN advertisers a ON a.id = ca.advertiser_id
@@ -269,7 +254,6 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 	for rows.Next() {
 		var creative models.Creative
 		var impressionCount sql.NullInt64
-		var rotationGroupID sql.NullString
 		if err := rows.Scan(
 			&creative.ID,
 			&creative.Name,
@@ -279,7 +263,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 			&creative.Size,
 			&impressionCount,
 			&creative.ImpressionsServed,
-			&rotationGroupID,
+			&creative.PlayWeight,
 			&creative.CampaignID,
 			pq.Array(&creative.SelectedDays),
 			pq.Array(&creative.TimeSlots),
@@ -291,10 +275,6 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 		if impressionCount.Valid {
 			v := impressionCount.Int64
 			creative.ImpressionCount = &v
-		}
-		if rotationGroupID.Valid {
-			v := rotationGroupID.String
-			creative.RotationGroupID = &v
 		}
 		creatives = append(creatives, &creative)
 	}
@@ -309,7 +289,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			id, name, type, url, file_path, size, impression_count, impressions_served, rotation_group_id, campaign_id, selected_days, time_slots, devices, uploaded_at
+			id, name, type, url, file_path, size, impression_count, impressions_served, play_weight, campaign_id, selected_days, time_slots, devices, uploaded_at
 		FROM creatives
 		WHERE campaign_id = $1
 		ORDER BY uploaded_at DESC
@@ -347,7 +327,7 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
             &creative.Size,
             &impressionCount,
             &creative.ImpressionsServed,
-            &creative.RotationGroupID,
+            &creative.PlayWeight,
             &creative.CampaignID,
             pq.Array(&creative.SelectedDays),
             pq.Array(&creative.TimeSlots),
@@ -378,7 +358,7 @@ func (r *creativeRepository) CountByCampaign(ctx context.Context, campaignID str
 func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	query := `
 		SELECT
-			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.rotation_group_id, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
+			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.play_weight, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
 		FROM creatives cr
 		JOIN campaigns ca ON ca.id = cr.campaign_id
 		WHERE EXISTS (
@@ -453,7 +433,6 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 	for rows.Next() {
 		var creative models.Creative
 		var impressionCount sql.NullInt64
-		var rotationGroupID sql.NullString
 		if err := rows.Scan(
 			&creative.ID,
 			&creative.Name,
@@ -463,7 +442,7 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 			&creative.Size,
 			&impressionCount,
 			&creative.ImpressionsServed,
-			&rotationGroupID,
+			&creative.PlayWeight,
 			&creative.CampaignID,
 			pq.Array(&creative.SelectedDays),
 			pq.Array(&creative.TimeSlots),
@@ -475,10 +454,6 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		if impressionCount.Valid {
 			v := impressionCount.Int64
 			creative.ImpressionCount = &v
-		}
-		if rotationGroupID.Valid {
-			v := rotationGroupID.String
-			creative.RotationGroupID = &v
 		}
 		creatives = append(creatives, &creative)
 	}
@@ -554,22 +529,13 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 			file_path = COALESCE($4, file_path),
 			size = COALESCE($5, size),
 			impression_count = COALESCE($6, impression_count),
-			rotation_group_id = CASE
-				WHEN $7::boolean = true THEN NULL
-				ELSE COALESCE($8::uuid, rotation_group_id)
-			END,
-			selected_days = COALESCE($9::text[], selected_days),
-			time_slots = COALESCE($10::text[], time_slots),
-			devices = COALESCE($11::text[], devices)
-		WHERE id = $12
+			play_weight = COALESCE($7, play_weight),
+			selected_days = COALESCE($8::text[], selected_days),
+			time_slots = COALESCE($9::text[], time_slots),
+			devices = COALESCE($10::text[], devices)
+		WHERE id = $11
 		RETURNING id
 	`
-
-	clearRotation := req.ClearRotationGroup
-	var rotationGroupID any
-	if req.RotationGroupID != nil && strings.TrimSpace(*req.RotationGroupID) != "" {
-		rotationGroupID = *req.RotationGroupID
-	}
 
 	var selectedDays any
 	if req.SelectedDays != nil {
@@ -593,8 +559,7 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 		req.FilePath,
 		req.Size,
 		req.ImpressionCount,
-		clearRotation,
-		rotationGroupID,
+		req.PlayWeight,
 		selectedDays,
 		timeSlots,
 		devices,
@@ -605,63 +570,16 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 	return nil
 }
 
-func (r *creativeRepository) EnsureRotationGroup(ctx context.Context, campaignID string, name string, selectedDays []string, timeSlots []string) (string, error) {
-	if strings.TrimSpace(campaignID) == "" {
-		return "", fmt.Errorf("campaignID is required")
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", fmt.Errorf("rotation_group_name is required")
-	}
-	if len(selectedDays) == 0 {
-		return "", fmt.Errorf("selected_days is required for rotation group")
-	}
-	if len(timeSlots) == 0 {
-		return "", fmt.Errorf("time_slots is required for rotation group")
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO rotation_groups (campaign_id, name, selected_days, time_slots)
-		VALUES ($1, $2, $3::text[], $4::text[])
-		ON CONFLICT (campaign_id, name) DO NOTHING
-	`, campaignID, name, pq.Array(selectedDays), pq.Array(timeSlots))
-	if err != nil {
-		return "", err
-	}
-
-	var id string
-	var existingDays []string
-	var existingSlots []string
-	if err := tx.QueryRowContext(ctx, `
-		SELECT id, selected_days, time_slots
-		FROM rotation_groups
-		WHERE campaign_id = $1 AND name = $2
-	`, campaignID, name).Scan(&id, pq.Array(&existingDays), pq.Array(&existingSlots)); err != nil {
-		return "", err
-	}
-
-	if !equalStringSlices(existingDays, selectedDays) || !equalStringSlices(existingSlots, timeSlots) {
-		return "", fmt.Errorf("rotation_group_name already exists with different selected_days/time_slots")
-	}
-
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return id, nil
+type rotationDailyRow struct {
+	creativeID  string
+	servedCount int
 }
 
-func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, rotationGroupID string, candidateCreativeIDs []string) (string, error) {
+func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error) {
 	device = strings.TrimSpace(device)
 	campaignID = strings.TrimSpace(campaignID)
-	rotationGroupID = strings.TrimSpace(rotationGroupID)
-	if device == "" || campaignID == "" || rotationGroupID == "" {
-		return "", fmt.Errorf("device, campaignID and rotationGroupID are required")
+	if device == "" || campaignID == "" {
+		return "", fmt.Errorf("device and campaignID are required")
 	}
 	if len(candidateCreativeIDs) == 0 {
 		return "", fmt.Errorf("candidateCreativeIDs is required")
@@ -694,37 +612,106 @@ func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, dev
 	}
 	defer tx.Rollback()
 
-	var last sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT last_creative_id
-		FROM creative_rotation_state
-		WHERE device = $1 AND campaign_id = $2 AND rotation_group_id = $3
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	dayStr := day.Format("2006-01-02")
+
+	// Load weights for candidates.
+	weights := make(map[string]int, len(unique))
+	rowsW, err := tx.QueryContext(ctx, `
+		SELECT id::text, COALESCE(play_weight, 0)
+		FROM creatives
+		WHERE id = ANY($1::uuid[])
+	`, pq.Array(unique))
+	if err != nil {
+		return "", err
+	}
+	for rowsW.Next() {
+		var id string
+		var w int
+		if err := rowsW.Scan(&id, &w); err != nil {
+			rowsW.Close()
+			return "", err
+		}
+		weights[id] = w
+	}
+	rowsW.Close()
+	if err := rowsW.Err(); err != nil {
+		return "", err
+	}
+	for _, id := range unique {
+		if _, ok := weights[id]; !ok {
+			weights[id] = 0
+		}
+	}
+
+	sumW := 0
+	for _, id := range unique {
+		w := weights[id]
+		if w < 0 {
+			w = 0
+		}
+		sumW += w
+	}
+	if sumW <= 0 {
+		// Fallback: treat all weights as equal.
+		sumW = len(unique)
+		for _, id := range unique {
+			weights[id] = 1
+		}
+	}
+
+	served := make(map[string]int, len(unique))
+	rowsS, err := tx.QueryContext(ctx, `
+		SELECT creative_id::text, served_count
+		FROM creative_rotation_state_daily
+		WHERE device = $1 AND campaign_id = $2 AND day = $3::date
 		FOR UPDATE
-	`, device, campaignID, rotationGroupID).Scan(&last)
-	if err != nil && err != sql.ErrNoRows {
+	`, device, campaignID, dayStr)
+	if err != nil {
+		return "", err
+	}
+	for rowsS.Next() {
+		var cid string
+		var cnt int
+		if err := rowsS.Scan(&cid, &cnt); err != nil {
+			rowsS.Close()
+			return "", err
+		}
+		served[cid] = cnt
+	}
+	rowsS.Close()
+	if err := rowsS.Err(); err != nil {
 		return "", err
 	}
 
+	// Determine next pick using deficit vs expected share after (total+1) deliveries.
+	totalServed := 0
+	for _, id := range unique {
+		totalServed += served[id]
+	}
+	projectedTotal := totalServed + 1
+
 	chosen := unique[0]
-	if last.Valid {
-		idx := -1
-		for i, id := range unique {
-			if id == last.String {
-				idx = i
-				break
-			}
+	bestScore := -math.MaxFloat64
+	for _, id := range unique {
+		w := weights[id]
+		if w < 0 {
+			w = 0
 		}
-		if idx >= 0 {
-			chosen = unique[(idx+1)%len(unique)]
+		expected := (float64(projectedTotal) * float64(w)) / float64(sumW)
+		deficit := expected - float64(served[id])
+		if deficit > bestScore {
+			bestScore = deficit
+			chosen = id
 		}
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO creative_rotation_state (device, campaign_id, rotation_group_id, last_creative_id, updated_at)
-		VALUES ($1, $2, $3, $4, NOW() AT TIME ZONE 'UTC')
-		ON CONFLICT (device, campaign_id, rotation_group_id)
-		DO UPDATE SET last_creative_id = EXCLUDED.last_creative_id, updated_at = EXCLUDED.updated_at
-	`, device, campaignID, rotationGroupID, chosen)
+		INSERT INTO creative_rotation_state_daily (device, campaign_id, day, creative_id, served_count, updated_at)
+		VALUES ($1, $2, $3::date, $4, 1, NOW() AT TIME ZONE 'UTC')
+		ON CONFLICT (device, campaign_id, day, creative_id)
+		DO UPDATE SET served_count = creative_rotation_state_daily.served_count + 1, updated_at = EXCLUDED.updated_at
+	`, device, campaignID, dayStr, chosen)
 	if err != nil {
 		return "", err
 	}

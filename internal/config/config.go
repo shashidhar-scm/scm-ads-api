@@ -19,6 +19,8 @@ type Config struct {
 	RateLimitWindowSeconds int
 	RateLimitMax           int
 
+	GoogleClientID string
+
 	CityPostConsoleBaseURL   string
 	CityPostConsoleUsername  string
 	CityPostConsolePassword  string
@@ -70,6 +72,7 @@ func Load() *Config {
 		JWTExpiresInSeconds: getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
 		AuthResetPasswordURL: getEnv("AUTH_RESET_PASSWORD_URL", "https://scm-ads.citypost.us/reset-password"),
 		DashboardBaseURL:    getEnv("DASHBOARD_BASE_URL", "https://scm-ads.citypost.us"),
+		GoogleClientID:      getEnv("GOOGLE_CLIENT_ID", ""),
 
 		CityPostConsoleBaseURL:    getEnv("CITYPOST_CONSOLE_BASE_URL", "https://consoleapi.citypost.us/scm-cloud"),
 		CityPostConsoleUsername:   getEnv("CITYPOST_CONSOLE_USERNAME", "girish@smartcitymedia.us"),

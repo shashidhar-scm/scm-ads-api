@@ -182,9 +182,9 @@ definitions:
         type: integer
       impressions_served:
         type: integer
+      play_weight:
+        type: integer
       name:
-        type: string
-      rotation_group_id:
         type: string
       selected_days:
         items:
@@ -565,10 +565,10 @@ definitions:
         type: array
       impression_count:
         type: integer
+      play_weight:
+        type: integer
       name:
         minLength: 1
-        type: string
-      rotation_group_name:
         type: string
       selected_days:
         items:

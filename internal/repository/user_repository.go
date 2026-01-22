@@ -32,7 +32,7 @@ func NewUserRepository(db *sql.DB) UserRepository {
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 	query := `
 		INSERT INTO users (id, email, name, user_name, phone_number, password_hash, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7)
 		RETURNING created_at
 	`
 
@@ -48,13 +48,25 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, 
 	`
 
 	var u models.User
+	var name sql.NullString
+	var userName sql.NullString
+	var phoneNumber sql.NullString
 	var lastLoginAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
+	}
+	if name.Valid {
+		u.Name = name.String
+	}
+	if userName.Valid {
+		u.UserName = userName.String
+	}
+	if phoneNumber.Valid {
+		u.PhoneNumber = phoneNumber.String
 	}
 	if lastLoginAt.Valid {
 		v := lastLoginAt.Time
@@ -71,13 +83,25 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.
 	`
 
 	var u models.User
+	var name sql.NullString
+	var userName sql.NullString
+	var phoneNumber sql.NullString
 	var lastLoginAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
+	err := r.db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
+	}
+	if name.Valid {
+		u.Name = name.String
+	}
+	if userName.Valid {
+		u.UserName = userName.String
+	}
+	if phoneNumber.Valid {
+		u.PhoneNumber = phoneNumber.String
 	}
 	if lastLoginAt.Valid {
 		v := lastLoginAt.Time
@@ -97,13 +121,25 @@ func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string)
 	`
 
 	var u models.User
+	var name sql.NullString
+	var userName sql.NullString
+	var phoneNumber sql.NullString
 	var lastLoginAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, identifier).Scan(&u.ID, &u.Email, &u.Name, &u.UserName, &u.PhoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
+	err := r.db.QueryRowContext(ctx, query, identifier).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
+	}
+	if name.Valid {
+		u.Name = name.String
+	}
+	if userName.Valid {
+		u.UserName = userName.String
+	}
+	if phoneNumber.Valid {
+		u.PhoneNumber = phoneNumber.String
 	}
 	if lastLoginAt.Valid {
 		v := lastLoginAt.Time

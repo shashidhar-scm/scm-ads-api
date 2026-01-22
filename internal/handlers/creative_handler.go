@@ -29,7 +29,6 @@ import (
 	"github.com/lib/pq"
 	"scm/internal/config"
 	"scm/internal/interfaces"
-	"scm/internal/middleware"
 	"scm/internal/models"
 	"scm/internal/repository"
 )
@@ -66,6 +65,222 @@ func getEnvOrDefault(key string, defaultValue string) string {
 		return defaultValue
 	}
 	return v
+}
+
+func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.Request) {
+	device := strings.TrimSpace(chi.URLParam(r, "device"))
+	if device == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "device is required")
+		return
+	}
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	activeNow := false
+	if raw := strings.TrimSpace(r.URL.Query().Get("active_now")); raw != "" {
+		activeNow = strings.EqualFold(raw, "true") || raw == "1" || strings.EqualFold(raw, "yes")
+	}
+
+	now := time.Now().UTC()
+	items, err := h.repo.ListByDevice(r.Context(), device, activeNow, now, 0, 0)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	if items == nil {
+		items = []*models.Creative{}
+	}
+
+	byCampaign := make(map[string][]*models.Creative)
+	for _, c := range items {
+		if c == nil {
+			continue
+		}
+		cid := strings.TrimSpace(c.CampaignID)
+		if cid == "" {
+			continue
+		}
+		byCampaign[cid] = append(byCampaign[cid], c)
+	}
+
+	campaignIDs := make([]string, 0, len(byCampaign))
+	for cid := range byCampaign {
+		campaignIDs = append(campaignIDs, cid)
+	}
+	sort.Strings(campaignIDs)
+
+	selected := make([]*models.Creative, 0, len(campaignIDs))
+	for _, campaignID := range campaignIDs {
+		cs := byCampaign[campaignID]
+		if len(cs) == 0 {
+			continue
+		}
+		if len(cs) == 1 {
+			selected = append(selected, cs[0])
+			continue
+		}
+		// Stable order for the rotation cycle.
+		sort.Slice(cs, func(i, j int) bool {
+			if cs[i] == nil {
+				return false
+			}
+			if cs[j] == nil {
+				return true
+			}
+			if cs[i].UploadedAt.Equal(cs[j].UploadedAt) {
+				return cs[i].ID < cs[j].ID
+			}
+			return cs[i].UploadedAt.Before(cs[j].UploadedAt)
+		})
+
+		candidateIDs := make([]string, 0, len(cs))
+		for _, c := range cs {
+			if c == nil {
+				continue
+			}
+			candidateIDs = append(candidateIDs, c.ID)
+		}
+		nextID, err := h.repo.PickNextRotationalCreative(r.Context(), device, campaignID, candidateIDs)
+		if err != nil {
+			selected = append(selected, cs[0])
+			continue
+		}
+		picked := cs[0]
+		for _, c := range cs {
+			if c != nil && c.ID == nextID {
+				picked = c
+				break
+			}
+		}
+		selected = append(selected, picked)
+	}
+
+	total := len(selected)
+	start := p.offset
+	if start < 0 {
+		start = 0
+	}
+	if start > total {
+		start = total
+	}
+	end := start + p.limit
+	if end > total {
+		end = total
+	}
+
+	pageItems := selected[start:end]
+	if pageItems == nil {
+		pageItems = []*models.Creative{}
+	}
+
+	writePaginatedResponse(w, http.StatusOK, pageItems, p.page, p.pageSize, total)
+}
+
+func (h *CreativeHandler) SearchCreatives(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "query is required")
+		return
+	}
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	items, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset, nil)
+	if err != nil {
+		log.Printf("SearchCreatives failed: query=%q err=%v", query, err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_creatives_failed", "Failed to search creatives")
+		return
+	}
+	if items == nil {
+		items = []*models.Creative{}
+	}
+	writePaginatedResponse(w, http.StatusOK, items, p.page, p.pageSize, total)
+}
+
+func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) {
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	items, err := h.repo.ListAll(r.Context(), p.limit, p.offset, nil)
+	if err != nil {
+		log.Printf("ListCreatives failed: err=%v", err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	total, err := h.repo.CountAll(r.Context(), nil)
+	if err != nil {
+		log.Printf("ListCreatives count failed: err=%v", err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	if items == nil {
+		items = []*models.Creative{}
+	}
+	writePaginatedResponse(w, http.StatusOK, items, p.page, p.pageSize, total)
+}
+
+func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http.Request) {
+	campaignID := strings.TrimSpace(chi.URLParam(r, "campaignID"))
+	if campaignID == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaignID is required")
+		return
+	}
+
+	p, err := parsePaginationParams(r, 50, 200)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
+		return
+	}
+
+	items, err := h.repo.ListByCampaign(r.Context(), campaignID, p.limit, p.offset)
+	if err != nil {
+		log.Printf("ListCreativesByCampaign failed: campaign_id=%s err=%v", campaignID, err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	total, err := h.repo.CountByCampaign(r.Context(), campaignID)
+	if err != nil {
+		log.Printf("ListCreativesByCampaign count failed: campaign_id=%s err=%v", campaignID, err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	if items == nil {
+		items = []*models.Creative{}
+	}
+	writePaginatedResponse(w, http.StatusOK, items, p.page, p.pageSize, total)
+}
+
+func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
+		return
+	}
+
+	creative, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_creative_failed", "Failed to get creative")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(creative)
 }
 
 func isSupportedImageContentType(ct string) bool {
@@ -676,6 +891,16 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
         impressionCount = &v
     }
 
+    playWeight := 100
+    if raw := strings.TrimSpace(r.FormValue("play_weight")); raw != "" {
+        v, err := strconv.Atoi(raw)
+        if err != nil || v < 0 {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "play_weight must be a non-negative integer")
+            return
+        }
+        playWeight = v
+    }
+
     selectedDays := parseFormList(r, "selected_days")
     if len(selectedDays) == 0 {
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "selected_days is required")
@@ -689,16 +914,6 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     }
 
     devices := parseFormList(r, "devices")
-    rotationGroupName := strings.TrimSpace(r.FormValue("rotation_group_name"))
-    var rotationGroupID *string
-    if rotationGroupName != "" {
-        id, err := h.repo.EnsureRotationGroup(r.Context(), campaignID, rotationGroupName, selectedDays, timeSlots)
-        if err != nil {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
-            return
-        }
-        rotationGroupID = &id
-    }
 
     // 2. Get the files from the form
     files := r.MultipartForm.File["files"]
@@ -727,7 +942,7 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
             Type:         getFileType(fileHeader),
             Size:         fileHeader.Size,
             ImpressionCount: impressionCount,
-            RotationGroupID: rotationGroupID,
+            PlayWeight:   playWeight,
             CampaignID:   campaignID,
             SelectedDays: selectedDays,
             TimeSlots:    timeSlots,
@@ -782,298 +997,6 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     }
 }
 
-// Helper function to determine file type
-func getFileType(header *multipart.FileHeader) models.CreativeType {
-    switch header.Header.Get("Content-Type") {
-    case "image/jpeg", "image/png", "image/gif":
-        return models.CreativeTypeImage
-    case "video/mp4", "video/quicktime":
-        return models.CreativeTypeVideo
-    default:
-        return models.CreativeTypeImage
-    }
-}
-
-// @Tags Creatives
-// @Summary List creatives by campaign
-// @Security BearerAuth
-// @Produce json
-// @Param campaignID path string true "Campaign ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
-// @Success 200 {array} models.Creative
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /api/v1/creatives/campaign/{campaignID} [get]
-func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http.Request) {
-    campaignID := chi.URLParam(r, "campaignID")
-    if campaignID == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaignID is required")
-        return
-    }
-
-	p, err := parsePaginationParams(r, 50, 200)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
-		return
-	}
-
-	total, err := h.repo.CountByCampaign(r.Context(), campaignID)
-	if err != nil {
-		log.Printf("Failed to count creatives: %v", err)
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
-		return
-	}
-
-    creatives, err := h.repo.ListByCampaign(r.Context(), campaignID, p.limit, p.offset)
-    if err != nil {
-        log.Printf("Failed to list creatives: %v", err)
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
-        return
-    }
-
-	if creatives == nil {
-		creatives = []*models.Creative{}
-	}
-
-	writePaginatedResponse(w, http.StatusOK, creatives, p.page, p.pageSize, total)
-}
-
-// @Tags Creatives
-// @Summary Search creatives
-// @Security BearerAuth
-// @Produce json
-// @Param query query string true "Search text (matches name, type, selected days, time slots, devices)"
-// @Param page query int false "Page number" default(1)
-// @Param page_size query int false "Page size" default(20)
-// @Success 200 {object} map[string]interface{}
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /api/v1/creatives/search [get]
-func (h *CreativeHandler) SearchCreatives(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("query"))
-	if query == "" {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "query is required")
-		return
-	}
-
-	p, err := parsePaginationParams(r, 50, 200)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
-		return
-	}
-
-	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
-	isGlobalAdmin := false
-	var createdByFilter *string
-	if h.db != nil && strings.TrimSpace(userID) != "" {
-		ur := repository.NewUserRoleRepository(h.db)
-		isSuper, _ := ur.IsSuperAdmin(r.Context(), userID)
-		isAdmin, _ := ur.IsAdmin(r.Context(), userID)
-		isGlobalAdmin = isSuper || isAdmin
-	}
-	if !isGlobalAdmin && strings.TrimSpace(userID) != "" {
-		createdByFilter = &userID
-	}
-
-	creatives, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset, createdByFilter)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_creatives_failed", "Failed to search creatives")
-		return
-	}
-
-	if creatives == nil {
-		creatives = []*models.Creative{}
-	}
-
-	writePaginatedResponse(w, http.StatusOK, creatives, p.page, p.pageSize, total)
-}
-
-// @Tags Creatives
-// @Summary List creatives
-// @Security BearerAuth
-// @Produce json
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
-// @Success 200 {array} models.Creative
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /api/v1/creatives/ [get]
-func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) {
-	p, err := parsePaginationParams(r, 50, 200)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
-		return
-	}
-
-	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
-	isGlobalAdmin := false
-	var createdByFilter *string
-	if h.db != nil && strings.TrimSpace(userID) != "" {
-		ur := repository.NewUserRoleRepository(h.db)
-		isSuper, _ := ur.IsSuperAdmin(r.Context(), userID)
-		isAdmin, _ := ur.IsAdmin(r.Context(), userID)
-		isGlobalAdmin = isSuper || isAdmin
-	}
-	if !isGlobalAdmin && strings.TrimSpace(userID) != "" {
-		createdByFilter = &userID
-	}
-
-	total, err := h.repo.CountAll(r.Context(), createdByFilter)
-	if err != nil {
-		log.Printf("Failed to count creatives: %v", err)
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
-		return
-	}
-
-    creatives, err := h.repo.ListAll(r.Context(), p.limit, p.offset, createdByFilter)
-    if err != nil {
-        log.Printf("Failed to list creatives: %v", err)
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
-        return
-    }
-
-	if creatives == nil {
-		creatives = []*models.Creative{}
-	}
-
-	writePaginatedResponse(w, http.StatusOK, creatives, p.page, p.pageSize, total)
-}
-
-// @Tags Creatives
-// @Summary List creatives by device
-// @Produce json
-// @Param device path string true "Device name"
-// @Param active_now query bool false "Filter by current day and time"
-// @Success 200 {array} models.Creative
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /api/v1/creatives/device/{device} [get]
-func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.Request) {
-	device := chi.URLParam(r, "device")
-	if device == "" {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "device is required")
-		return
-	}
-
-	p, err := parsePaginationParams(r, 50, 200)
-	if err != nil {
-		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "invalid pagination parameters")
-		return
-	}
-
-	activeNow := strings.EqualFold(r.URL.Query().Get("active_now"), "true") || r.URL.Query().Get("active_now") == "1"
-
-	now := time.Now().UTC()
-
-	creatives, err := h.repo.ListByDevice(r.Context(), device, activeNow, now, p.limit, p.offset)
-	if err != nil {
-		log.Printf("Failed to list creatives by device: %v", err)
-		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
-		return
-	}
-
-	if creatives == nil {
-		creatives = []*models.Creative{}
-	}
-
-	type creativesByCampaign struct {
-		CampaignID string             `json:"campaign_id"`
-		Creatives  []*models.Creative `json:"creatives"`
-	}
-
-	byCampaign := make(map[string][]*models.Creative)
-	for _, c := range creatives {
-		if c == nil {
-			continue
-		}
-		byCampaign[c.CampaignID] = append(byCampaign[c.CampaignID], c)
-	}
-
-	groups := make([]creativesByCampaign, 0, len(byCampaign))
-	for campaignID, cs := range byCampaign {
-		nonRotational := make([]*models.Creative, 0)
-		rotational := make(map[string][]*models.Creative)
-		for _, c := range cs {
-			if c == nil {
-				continue
-			}
-			if c.RotationGroupID == nil || strings.TrimSpace(*c.RotationGroupID) == "" {
-				nonRotational = append(nonRotational, c)
-				continue
-			}
-			rotational[*c.RotationGroupID] = append(rotational[*c.RotationGroupID], c)
-		}
-
-		selected := make([]*models.Creative, 0, len(nonRotational)+len(rotational))
-		selected = append(selected, nonRotational...)
-
-		for rgid, members := range rotational {
-			if len(members) == 0 {
-				continue
-			}
-			sort.SliceStable(members, func(i, j int) bool {
-				if members[i].UploadedAt.Equal(members[j].UploadedAt) {
-					return members[i].ID < members[j].ID
-				}
-				return members[i].UploadedAt.Before(members[j].UploadedAt)
-			})
-			candidateIDs := make([]string, 0, len(members))
-			for _, m := range members {
-				candidateIDs = append(candidateIDs, m.ID)
-			}
-			nextID, err := h.repo.PickNextRotationalCreative(r.Context(), device, campaignID, rgid, candidateIDs)
-			if err != nil {
-				continue
-			}
-			for _, m := range members {
-				if m.ID == nextID {
-					selected = append(selected, m)
-					break
-				}
-			}
-		}
-
-		groups = append(groups, creativesByCampaign{CampaignID: campaignID, Creatives: selected})
-	}
-
-	writePaginatedResponse(w, http.StatusOK, groups, p.page, p.pageSize, len(groups))
-}
-
-// GetCreative handles GET /creatives/{id}
-// @Tags Creatives
-// @Summary Get creative
-// @Security BearerAuth
-// @Produce json
-// @Param id path string true "Creative ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
-// @Success 200 {object} models.Creative
-// @Failure 400 {object} map[string]interface{}
-// @Failure 404 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /api/v1/creatives/{id}/ [get]
-func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
-        return
-    }
-
-    creative, err := h.repo.GetByID(r.Context(), id)
-    if err != nil {
-        if err == sql.ErrNoRows {
-            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
-            return
-        }
-        log.Printf("Failed to get creative: %v", err)
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_creative_failed", "Failed to get creative")
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    if err := json.NewEncoder(w).Encode(creative); err != nil {
-        log.Printf("Error encoding response: %v", err)
-    }
-}
-
 // UpdateCreative handles PUT /creatives/{id}
 // @Tags Creatives
 // @Summary Update creative
@@ -1117,6 +1040,15 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
             }
         }
 
+        if raw := strings.TrimSpace(r.FormValue("play_weight")); raw != "" {
+            if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+                req.PlayWeight = &v
+            } else {
+                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "play_weight must be a non-negative integer")
+                return
+            }
+        }
+
         if r.MultipartForm != nil {
             if _, ok := r.MultipartForm.Value["selected_days"]; ok {
                 v := parseFormList(r, "selected_days")
@@ -1129,13 +1061,6 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
             if _, ok := r.MultipartForm.Value["devices"]; ok {
                 v := parseFormList(r, "devices")
                 req.Devices = &v
-            }
-            if _, ok := r.MultipartForm.Value["rotation_group_name"]; ok {
-                v := strings.TrimSpace(r.FormValue("rotation_group_name"))
-                req.RotationGroupName = &v
-                if v == "" {
-                    req.ClearRotationGroup = true
-                }
             }
         }
 
@@ -1188,32 +1113,6 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
             return
         }
 
-        if req.RotationGroupName != nil && strings.TrimSpace(*req.RotationGroupName) != "" {
-            existing, err := h.repo.GetByID(r.Context(), id)
-            if err != nil {
-                if err == sql.ErrNoRows {
-                    writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
-                    return
-                }
-                writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
-                return
-            }
-            days := existing.SelectedDays
-            slots := existing.TimeSlots
-            if req.SelectedDays != nil {
-                days = *req.SelectedDays
-            }
-            if req.TimeSlots != nil {
-                slots = *req.TimeSlots
-            }
-            gid, err := h.repo.EnsureRotationGroup(r.Context(), existing.CampaignID, *req.RotationGroupName, days, slots)
-            if err != nil {
-                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
-                return
-            }
-            req.RotationGroupID = &gid
-        }
-
         if err := h.repo.Update(r.Context(), id, &req); err != nil {
             if err == sql.ErrNoRows {
                 writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
@@ -1232,10 +1131,6 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
         writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
         return
-    }
-
-    if req.RotationGroupName != nil && strings.TrimSpace(*req.RotationGroupName) == "" {
-        req.ClearRotationGroup = true
     }
 
     if err := h.validator.Struct(req); err != nil {
@@ -1269,25 +1164,6 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
                 return
             }
         }
-    }
-
-    if req.ClearRotationGroup {
-        req.RotationGroupID = nil
-    } else if req.RotationGroupName != nil && strings.TrimSpace(*req.RotationGroupName) != "" {
-        days := existing.SelectedDays
-        slots := existing.TimeSlots
-        if req.SelectedDays != nil {
-            days = *req.SelectedDays
-        }
-        if req.TimeSlots != nil {
-            slots = *req.TimeSlots
-        }
-        gid, err := h.repo.EnsureRotationGroup(r.Context(), existing.CampaignID, *req.RotationGroupName, days, slots)
-        if err != nil {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
-            return
-        }
-        req.RotationGroupID = &gid
     }
 
     if err := h.repo.Update(r.Context(), id, &req); err != nil {
@@ -1332,4 +1208,15 @@ func (h *CreativeHandler) DeleteCreative(w http.ResponseWriter, r *http.Request)
     }
 
     writeJSONMessage(w, http.StatusOK, "creative deleted successfully")
+}
+
+func getFileType(header *multipart.FileHeader) models.CreativeType {
+	switch header.Header.Get("Content-Type") {
+	case "image/jpeg", "image/png", "image/gif":
+		return models.CreativeTypeImage
+	case "video/mp4", "video/quicktime":
+		return models.CreativeTypeVideo
+	default:
+		return models.CreativeTypeImage
+	}
 }

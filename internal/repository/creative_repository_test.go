@@ -19,7 +19,7 @@ func TestCreativeRepository_ListByDevice_FiltersActiveCampaigns(t *testing.T) {
 
 	mock.ExpectQuery("JOIN campaigns ca ON ca\\.id = cr\\.campaign_id").
 		WithArgs("kcmo_web", 10).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "type", "url", "file_path", "size", "campaign_id", "selected_days", "time_slots", "devices", "uploaded_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "type", "url", "file_path", "size", "impression_count", "impressions_served", "play_weight", "campaign_id", "selected_days", "time_slots", "devices", "uploaded_at"}))
 
 	_, err = repo.ListByDevice(context.Background(), "kcmo_web", false, time.Now().UTC(), 10, 0)
 	if err != nil {
