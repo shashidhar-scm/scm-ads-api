@@ -29,6 +29,7 @@ import (
 	"github.com/lib/pq"
 	"scm/internal/config"
 	"scm/internal/interfaces"
+	"scm/internal/middleware"
 	"scm/internal/models"
 	"scm/internal/repository"
 )
@@ -57,6 +58,59 @@ func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfa
         validator: validator.New(),
 		db:        db,
     }
+}
+
+func (h *CreativeHandler) isGlobalAdmin(ctx context.Context, userID string) (bool, error) {
+	if h.db == nil || strings.TrimSpace(userID) == "" {
+		return false, nil
+	}
+	ur := repository.NewUserRoleRepository(h.db)
+	isSuper, err := ur.IsSuperAdmin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	isAdmin, err := ur.IsAdmin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return isSuper || isAdmin, nil
+}
+
+func (h *CreativeHandler) ensureCampaignOwnedByCaller(ctx context.Context, campaignID string, callerID string) (bool, error) {
+	if h.db == nil {
+		return false, nil
+	}
+	var ok bool
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM campaigns c
+			JOIN advertisers a ON a.id = c.advertiser_id
+			WHERE c.id = $1 AND a.created_by = $2
+		)
+	`, campaignID, callerID).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+func (h *CreativeHandler) ensureCreativeOwnedByCaller(ctx context.Context, creativeID string, callerID string) (bool, error) {
+	if h.db == nil {
+		return false, nil
+	}
+	var ok bool
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM creatives cr
+			JOIN campaigns c ON c.id = cr.campaign_id
+			JOIN advertisers a ON a.id = c.advertiser_id
+			WHERE cr.id = $1 AND a.created_by = $2
+		)
+	`, creativeID, callerID).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 func getEnvOrDefault(key string, defaultValue string) string {
@@ -193,7 +247,18 @@ func (h *CreativeHandler) SearchCreatives(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	items, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset, nil)
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_creatives_failed", "Failed to search creatives")
+		return
+	}
+	var createdByFilter *string
+	if !isGlobalAdmin {
+		createdByFilter = &callerID
+	}
+
+	items, total, err := h.repo.Search(r.Context(), query, p.limit, p.offset, createdByFilter)
 	if err != nil {
 		log.Printf("SearchCreatives failed: query=%q err=%v", query, err)
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_creatives_failed", "Failed to search creatives")
@@ -212,13 +277,24 @@ func (h *CreativeHandler) ListCreatives(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	items, err := h.repo.ListAll(r.Context(), p.limit, p.offset, nil)
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	var createdByFilter *string
+	if !isGlobalAdmin {
+		createdByFilter = &callerID
+	}
+
+	items, err := h.repo.ListAll(r.Context(), p.limit, p.offset, createdByFilter)
 	if err != nil {
 		log.Printf("ListCreatives failed: err=%v", err)
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
 		return
 	}
-	total, err := h.repo.CountAll(r.Context(), nil)
+	total, err := h.repo.CountAll(r.Context(), createdByFilter)
 	if err != nil {
 		log.Printf("ListCreatives count failed: err=%v", err)
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
@@ -235,6 +311,24 @@ func (h *CreativeHandler) ListCreativesByCampaign(w http.ResponseWriter, r *http
 	if campaignID == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaignID is required")
 		return
+	}
+
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "list_creatives_failed", "Failed to list creatives")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+			return
+		}
 	}
 
 	p, err := parsePaginationParams(r, 50, 200)
@@ -266,6 +360,24 @@ func (h *CreativeHandler) GetCreative(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
 		return
+	}
+
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_creative_failed", "Failed to get creative")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCreativeOwnedByCaller(r.Context(), id, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_creative_failed", "Failed to get creative")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
 	}
 
 	creative, err := h.repo.GetByID(r.Context(), id)
@@ -827,11 +939,10 @@ func parseFormList(r *http.Request, key string) []string {
 
 // UploadCreative handles multiple file uploads to S3
 // @Tags Creatives
-// @Summary Upload creatives
+// @Summary Upload creative
 // @Security BearerAuth
 // @Accept multipart/form-data
 // @Produce json
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param campaign_id formData string true "Campaign ID"
 // @Param selected_days formData string true "Selected days (comma separated or repeated)"
 // @Param time_slots formData string true "Time slots (comma separated or repeated)"
@@ -863,6 +974,24 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
     if h.campaignRepo == nil {
         writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "campaign repository not configured")
         return
+    }
+
+    callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+    isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+    if err != nil {
+        writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
+        return
+    }
+    if !isGlobalAdmin {
+        ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
+            return
+        }
+        if !ok {
+            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
+            return
+        }
     }
 
     campaign, err := h.campaignRepo.GetByID(r.Context(), campaignID)
@@ -1003,7 +1132,6 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Accept json
 // @Produce json
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param id path string true "Creative ID"
 // @Param body body models.UpdateCreativeRequest true "Update creative request"
 // @Success 200 {object} models.Creative
@@ -1017,6 +1145,24 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
         return
     }
+
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCreativeOwnedByCaller(r.Context(), id, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
+	}
 
     if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
         const maxMemory = 32 << 20
@@ -1184,7 +1330,6 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Creative ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
@@ -1196,6 +1341,24 @@ func (h *CreativeHandler) DeleteCreative(w http.ResponseWriter, r *http.Request)
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
         return
     }
+
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_creative_failed", "Failed to delete creative")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCreativeOwnedByCaller(r.Context(), id, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_creative_failed", "Failed to delete creative")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
+	}
 
     if err := h.repo.Delete(r.Context(), id); err != nil {
         if err == sql.ErrNoRows {

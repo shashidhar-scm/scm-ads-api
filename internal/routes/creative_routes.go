@@ -25,9 +25,9 @@ func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Co
     creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db)
 
     router.Route("/creatives", func(r chi.Router) {
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "creatives.read")).Get("/search", creativeHandler.SearchCreatives)
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "creatives.read")).Get("/", creativeHandler.ListCreatives)
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "creatives.read")).Post("/suggestions", creativeHandler.SuggestVenues)
+		r.With(authmw.RequirePermission(db, "creatives.read")).Get("/search", creativeHandler.SearchCreatives)
+		r.With(authmw.RequirePermission(db, "creatives.read")).Get("/", creativeHandler.ListCreatives)
+		r.With(authmw.RequirePermission(db, "creatives.read")).Post("/suggestions", creativeHandler.SuggestVenues)
         r.With(authmw.RequirePermission(db, "creatives.write")).Post("/upload", creativeHandler.UploadCreative)
         r.With(authmw.RequirePermission(db, "creatives.read")).Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)
         r.Route("/{id}", func(r chi.Router) {

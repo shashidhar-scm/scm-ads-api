@@ -41,10 +41,15 @@ type SetRolePermissionsRequest struct {
 	PermissionIDs []string `json:"permission_ids" validate:"required"`
 }
 
+type UserRole struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type UserRoleAssignment struct {
 	RoleID       string  `json:"role_id" validate:"required"`
 }
 
-type SetUserRolesRequest struct {
-	Roles []UserRoleAssignment `json:"roles" validate:"required"`
+type SetUserRoleRequest struct {
+	RoleID string `json:"role_id" validate:"required"`
 }

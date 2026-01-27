@@ -8,8 +8,9 @@ type User struct {
 	Name         string    `json:"name,omitempty"`
 	UserName     string    `json:"user_name,omitempty"`
 	PhoneNumber  string    `json:"phone_number,omitempty"`
+	Status       string    `json:"status,omitempty"`
 	PasswordHash string    `json:"-"`
-	Roles        []string  `json:"roles,omitempty"`
+	Role         string    `json:"role"`
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -32,8 +33,7 @@ type GoogleAuthRequest struct {
 }
 
 type LoginRole struct {
-	Name         string  `json:"name"`
-	AdvertiserID *string `json:"advertiser_id"`
+	Name string `json:"name"`
 }
 
 type LoginResponse struct {
@@ -45,7 +45,7 @@ type LoginResponse struct {
 	PhoneNumber string `json:"phone_number,omitempty"`
 	ID          string `json:"id"`
 	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
-	Roles       []LoginRole `json:"roles"`
+	Role        string `json:"role"`
 }
 
 type ForgotPasswordRequest struct {
@@ -62,6 +62,7 @@ type UpdateUserRequest struct {
 	Name        *string `json:"name,omitempty"`
 	UserName    *string `json:"user_name,omitempty"`
 	PhoneNumber *string `json:"phone_number,omitempty"`
+	Status      *string `json:"status,omitempty"`
 }
 
 type ChangePasswordRequest struct {

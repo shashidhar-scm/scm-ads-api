@@ -303,7 +303,6 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
 	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
 
 	isSuper := false
@@ -322,14 +321,12 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 	isGlobalAdmin := isSuper || isAdmin
 
 	var total int
-	if permissionGlobal {
-		if isGlobalAdmin {
-			total, err = h.repo.Count(r.Context())
-		} else if h.db != nil {
-			total, err = h.countAdvertisersCreatedByUser(r.Context(), userID)
-		} else {
-			total, err = h.repo.Count(r.Context())
-		}
+	if isGlobalAdmin {
+		total, err = h.repo.Count(r.Context())
+	} else if h.db != nil {
+		total, err = h.countAdvertisersCreatedByUser(r.Context(), userID)
+	} else {
+		total, err = h.repo.Count(r.Context())
 	}
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_advertisers_failed", "Failed to list advertisers")
@@ -337,14 +334,12 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 	}
 
 	var advertisers []models.Advertiser
-	if permissionGlobal {
-		if isGlobalAdmin {
-			advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
-		} else if h.db != nil {
-			advertisers, err = h.listAdvertisersCreatedByUser(r.Context(), userID, p.limit, p.offset)
-		} else {
-			advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
-		}
+	if isGlobalAdmin {
+		advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
+	} else if h.db != nil {
+		advertisers, err = h.listAdvertisersCreatedByUser(r.Context(), userID, p.limit, p.offset)
+	} else {
+		advertisers, err = h.repo.List(r.Context(), p.limit, p.offset)
 	}
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_advertisers_failed", "Failed to list advertisers")
@@ -382,7 +377,6 @@ func (h *AdvertiserHandler) SearchAdvertisers(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	permissionGlobal, _ := r.Context().Value(middleware.CtxPermissionGlobal).(bool)
 	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
 
 	isSuper := false
@@ -402,14 +396,12 @@ func (h *AdvertiserHandler) SearchAdvertisers(w http.ResponseWriter, r *http.Req
 
 	var advertisers []models.Advertiser
 	var total int
-	if permissionGlobal {
-		if isGlobalAdmin {
-			advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
-		} else if h.db != nil {
-			advertisers, total, err = h.searchAdvertisersCreatedByUser(r.Context(), userID, query, p.limit, p.offset)
-		} else {
-			advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
-		}
+	if isGlobalAdmin {
+		advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
+	} else if h.db != nil {
+		advertisers, total, err = h.searchAdvertisersCreatedByUser(r.Context(), userID, query, p.limit, p.offset)
+	} else {
+		advertisers, total, err = h.repo.Search(r.Context(), query, p.limit, p.offset)
 	}
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "search_advertisers_failed", "Failed to search advertisers")

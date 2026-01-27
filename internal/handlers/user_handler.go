@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+	"scm/internal/middleware"
 	"scm/internal/models"
 	"scm/internal/repository"
 )
@@ -75,7 +77,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		defer rows.Close()
 
-		byUser := make(map[string][]string, len(users))
+		byUser := make(map[string]string, len(users))
 		for rows.Next() {
 			var userID string
 			var roleName string
@@ -83,7 +85,9 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 				writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
 				return
 			}
-			byUser[userID] = append(byUser[userID], roleName)
+			if _, ok := byUser[userID]; !ok {
+				byUser[userID] = roleName
+			}
 		}
 		if err := rows.Err(); err != nil {
 			writeJSONErrorResponse(w, http.StatusInternalServerError, "list_users_failed", "Failed to list users")
@@ -91,10 +95,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for i := range users {
-			users[i].Roles = byUser[users[i].ID]
-			if users[i].Roles == nil {
-				users[i].Roles = []string{}
-			}
+			users[i].Role = byUser[users[i].ID]
 		}
 	}
 
@@ -142,23 +143,21 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		}
 		defer rows.Close()
 
-		var roles []string
+		role := ""
 		for rows.Next() {
 			var roleName string
 			if err := rows.Scan(&roleName); err != nil {
 				writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
 				return
 			}
-			roles = append(roles, roleName)
+			role = roleName
+			break
 		}
 		if err := rows.Err(); err != nil {
 			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
 			return
 		}
-		if roles == nil {
-			roles = []string{}
-		}
-		u.Roles = roles
+		u.Role = role
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -197,6 +196,35 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
         }
     }
 
+	if req.Status != nil {
+		v := strings.ToLower(strings.TrimSpace(*req.Status))
+		if v != "pending" && v != "active" {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "status must be pending or active")
+			return
+		}
+		req.Status = &v
+
+		if h.db == nil {
+			writeJSONErrorResponse(w, http.StatusForbidden, "forbidden", "insufficient permissions")
+			return
+		}
+		currentUserID, _ := r.Context().Value(middleware.CtxUserID).(string)
+		if strings.TrimSpace(currentUserID) == "" {
+			writeJSONErrorResponse(w, http.StatusUnauthorized, "unauthorized", "missing user identity")
+			return
+		}
+		ur := repository.NewUserRoleRepository(h.db)
+		isSuper, err := ur.IsSuperAdmin(r.Context(), currentUserID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "update_user_failed", "Failed to update user")
+			return
+		}
+		if !isSuper {
+			writeJSONErrorResponse(w, http.StatusForbidden, "forbidden", "insufficient permissions")
+			return
+		}
+	}
+
     if err := h.users.UpdateProfile(r.Context(), id, &req); err != nil {
         if err.Error() == "user not found" {
             writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
@@ -210,6 +238,37 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
     if err != nil {
         writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
         return
+    }
+
+    if h.db != nil {
+        rows, err := h.db.QueryContext(r.Context(), `
+            SELECT ro.name
+            FROM user_roles ur
+            JOIN roles ro ON ro.id = ur.role_id
+            WHERE ur.user_id = $1
+            ORDER BY ur.created_at ASC
+        `, updated.ID)
+        if err != nil {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+            return
+        }
+        defer rows.Close()
+
+        role := ""
+        for rows.Next() {
+            var roleName string
+            if err := rows.Scan(&roleName); err != nil {
+                writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+                return
+            }
+            role = roleName
+            break
+        }
+        if err := rows.Err(); err != nil {
+            writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+            return
+        }
+        updated.Role = role
     }
 
     w.Header().Set("Content-Type", "application/json")

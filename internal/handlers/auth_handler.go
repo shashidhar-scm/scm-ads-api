@@ -181,6 +181,8 @@ func buildWelcomeEmailBody(name string, dashboardURL string, userName string, te
 			"<p style=\"margin:0 0 16px 0; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;\">" + userName + "</p>"
 	}
 
+	body += "<p style=\"margin:0 0 16px 0;\"><b>Status:</b> Your account is pending approval. We will activate it soon.</p>"
+
 	if tempPassword != nil {
 		body += "<p style=\"margin:0 0 8px 0;\">Temporary password (only needed if you want to login without Google):</p>" +
 			"<p style=\"margin:0 0 16px 0; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;\">" + strings.TrimSpace(*tempPassword) + "</p>"
@@ -259,11 +261,11 @@ func (h *AuthHandler) writeLoginResponse(w http.ResponseWriter, r *http.Request,
 	var roles []models.LoginRole
 	if h.db != nil {
 		rows, err := h.db.QueryContext(r.Context(), `
-			SELECT ro.name, ur.advertiser_id
+			SELECT ro.name
 			FROM user_roles ur
 			JOIN roles ro ON ro.id = ur.role_id
 			WHERE ur.user_id = $1
-			ORDER BY ro.name ASC, ur.advertiser_id ASC
+			ORDER BY ro.name ASC
 		`, u.ID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
@@ -272,17 +274,12 @@ func (h *AuthHandler) writeLoginResponse(w http.ResponseWriter, r *http.Request,
 		defer rows.Close()
 		for rows.Next() {
 			var name string
-			var advertiserID sql.NullString
-			if err := rows.Scan(&name, &advertiserID); err != nil {
+			if err := rows.Scan(&name); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
 				return
 			}
-			var adv *string
-			if advertiserID.Valid {
-				v := advertiserID.String
-				adv = &v
-			}
-			roles = append(roles, models.LoginRole{Name: name, AdvertiserID: adv})
+			roles = append(roles, models.LoginRole{Name: name})
+			break
 		}
 		if err := rows.Err(); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
@@ -312,6 +309,11 @@ func (h *AuthHandler) writeLoginResponse(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	role := ""
+	if len(roles) > 0 {
+		role = roles[0].Name
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(models.LoginResponse{
 		AccessToken: signed,
@@ -322,7 +324,7 @@ func (h *AuthHandler) writeLoginResponse(w http.ResponseWriter, r *http.Request,
 		UserName:    u.UserName,
 		PhoneNumber: u.PhoneNumber,
 		LastLoginAt: u.LastLoginAt,
-		Roles:       roles,
+		Role:        role,
 	})
 }
 
@@ -399,6 +401,7 @@ func (h *AuthHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 			Email:        email,
 			Name:         strings.TrimSpace(claims.Name),
 			UserName:     h.generateUniqueUserName(r.Context(), usernameBaseFromName(claims.Name)),
+			Status:       "pending",
 			PasswordHash: string(hash),
 			CreatedAt:    time.Now().UTC(),
 		}
@@ -431,6 +434,11 @@ func (h *AuthHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 				log.Printf("google-auth: failed to send temp password email to %s: %v", u.Email, err)
 			}
 		}
+	}
+
+	if strings.TrimSpace(strings.ToLower(u.Status)) != "active" {
+		writeJSONError(w, http.StatusForbidden, "account_pending", "Your account is pending approval. We will activate it soon.")
+		return
 	}
 
 	h.writeLoginResponse(w, r, u)
@@ -486,6 +494,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Name:         req.Name,
 		UserName:     req.UserName,
 		PhoneNumber:  req.PhoneNumber,
+		Status:       "pending",
 		PasswordHash: string(hash),
 		CreatedAt:    time.Now().UTC(),
 	}
@@ -584,6 +593,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.TrimSpace(strings.ToLower(u.Status)) != "active" {
+		writeJSONError(w, http.StatusForbidden, "account_pending", "Your account is pending approval. We will activate it soon.")
+		return
+	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
 		log.Printf("login: invalid password for user_id=%s identifier=%q", u.ID, strings.TrimSpace(req.Identifier))
 		if h.cfg.AuthVerboseErrors {
@@ -602,11 +616,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var roles []models.LoginRole
 	if h.db != nil {
 		rows, err := h.db.QueryContext(r.Context(), `
-			SELECT ro.name, ur.advertiser_id
+			SELECT ro.name
 			FROM user_roles ur
 			JOIN roles ro ON ro.id = ur.role_id
 			WHERE ur.user_id = $1
-			ORDER BY ro.name ASC, ur.advertiser_id ASC
+			ORDER BY ro.name ASC
 		`, u.ID)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
@@ -615,17 +629,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var name string
-			var advertiserID sql.NullString
-			if err := rows.Scan(&name, &advertiserID); err != nil {
+			if err := rows.Scan(&name); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
 				return
 			}
-			var adv *string
-			if advertiserID.Valid {
-				v := advertiserID.String
-				adv = &v
-			}
-			roles = append(roles, models.LoginRole{Name: name, AdvertiserID: adv})
+			roles = append(roles, models.LoginRole{Name: name})
+			break
 		}
 		if err := rows.Err(); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "login_failed", "Failed to login")
@@ -655,6 +664,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	role := ""
+	if len(roles) > 0 {
+		role = roles[0].Name
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(models.LoginResponse{
 		AccessToken: signed,
@@ -665,7 +679,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		UserName:    u.UserName,
 		PhoneNumber: u.PhoneNumber,
 		LastLoginAt: u.LastLoginAt,
-		Roles:       roles,
+		Role:        role,
 	})
 }
 

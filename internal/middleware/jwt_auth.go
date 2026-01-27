@@ -14,8 +14,6 @@ type ctxKey string
 const (
 	CtxUserID ctxKey = "user_id"
 	CtxEmail  ctxKey = "email"
-	CtxAdvertiserID ctxKey = "advertiser_id"
-	CtxPermissionGlobal ctxKey = "permission_global"
 )
 
 func JWTAuth(secret string) func(http.Handler) http.Handler {

@@ -35,14 +35,14 @@ func TestGoogleAuthExistingUserSuccess(t *testing.T) {
 		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
 	}
 
-	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
 		WithArgs("g@b.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "last_login_at", "created_at"}).
-			AddRow("u1", "g@b.com", "G", "", "", string(hash), nil, time.Now().UTC()))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "status", "password_hash", "last_login_at", "created_at"}).
+			AddRow("u1", "g@b.com", "G", "", "", "active", string(hash), nil, time.Now().UTC()))
 
-	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).
+	mock.ExpectQuery(`(?s)SELECT ro\.name.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).
 		WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"name", "advertiser_id"}).AddRow("advertiser", nil))
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("advertiser"))
 
 	mock.ExpectExec(`UPDATE users SET last_login_at`).WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -67,8 +67,8 @@ func TestGoogleAuthExistingUserSuccess(t *testing.T) {
 	if resp["access_token"] == nil {
 		t.Fatalf("expected access_token, got %v", resp)
 	}
-	if resp["roles"] == nil {
-		t.Fatalf("expected roles in response, got %v", resp)
+	if resp["role"] == nil {
+		t.Fatalf("expected role in response, got %v", resp)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -84,7 +84,7 @@ func TestGoogleAuthCreatesUserAndAssignsRole(t *testing.T) {
 	defer db.Close()
 
 	// User not found.
-	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
 		WithArgs("new@b.com").
 		WillReturnError(sql.ErrNoRows)
 
@@ -95,12 +95,6 @@ func TestGoogleAuthCreatesUserAndAssignsRole(t *testing.T) {
 		sqlmock.NewRows([]string{"id"}).AddRow("role-adv"),
 	)
 	mock.ExpectExec("INSERT INTO user_roles").WillReturnResult(sqlmock.NewResult(1, 1))
-
-	// Login response loads roles and updates last_login_at.
-	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"name", "advertiser_id"}).AddRow("advertiser", nil))
-	mock.ExpectExec(`UPDATE users SET last_login_at`).WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	m := &recordingMailer{}
 	h := NewAuthHandler(db, &config.Config{JWTSecret: "dev", GoogleClientID: "cid", DashboardBaseURL: "https://dashboard.example", AuthResetPasswordURL: "https://reset.example"}, services.EmailSender(m))
@@ -115,18 +109,8 @@ func TestGoogleAuthCreatesUserAndAssignsRole(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GoogleAuth(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
-	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
-	if resp["access_token"] == nil {
-		t.Fatalf("expected access_token, got %v", resp)
-	}
-	if resp["roles"] == nil {
-		t.Fatalf("expected roles in response, got %v", resp)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d (%s)", w.Code, w.Body.String())
 	}
 	if m.calls != 1 {
 		t.Fatalf("expected temp password email to be sent once, got %d", m.calls)
@@ -187,10 +171,10 @@ func TestForgotPasswordReturnsTokenWhenEnabled(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at\s+FROM users\s+WHERE email = \$1`).
 		WithArgs("a@b.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "last_login_at", "created_at"}).
-			AddRow("u1", "a@b.com", "A", "a", "999", "hash", nil, time.Now().UTC()))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "status", "password_hash", "last_login_at", "created_at"}).
+			AddRow("u1", "a@b.com", "A", "a", "999", "active", "hash", nil, time.Now().UTC()))
 
 	mock.ExpectQuery("INSERT INTO password_reset_tokens").WillReturnRows(
 		sqlmock.NewRows([]string{"created_at"}).AddRow(time.Now().UTC()),
@@ -452,14 +436,14 @@ func TestLoginSuccess(t *testing.T) {
 		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
 	}
 
-	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, password_hash, last_login_at, created_at\s+FROM users`).WithArgs("a@b.com").WillReturnRows(
-		sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "password_hash", "last_login_at", "created_at"}).
-			AddRow("u1", "a@b.com", "A", "a", "999", string(hash), nil, time.Now().UTC()),
+	mock.ExpectQuery(`SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at\s+FROM users`).WithArgs("a@b.com").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "email", "name", "user_name", "phone_number", "status", "password_hash", "last_login_at", "created_at"}).
+			AddRow("u1", "a@b.com", "A", "a", "999", "active", string(hash), nil, time.Now().UTC()),
 	)
 
-	mock.ExpectQuery(`(?s)SELECT ro\.name, ur\.advertiser_id.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).WithArgs("u1").WillReturnRows(
-		sqlmock.NewRows([]string{"name", "advertiser_id"}).
-			AddRow("advertiser", nil),
+	mock.ExpectQuery(`(?s)SELECT ro\.name.*FROM user_roles ur.*JOIN roles ro ON ro\.id = ur\.role_id.*WHERE ur\.user_id = \$1`).WithArgs("u1").WillReturnRows(
+		sqlmock.NewRows([]string{"name"}).
+			AddRow("advertiser"),
 	)
 
 	mock.ExpectExec(`UPDATE users SET last_login_at`).WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -481,8 +465,8 @@ func TestLoginSuccess(t *testing.T) {
 	if resp["access_token"] == nil {
 		t.Fatalf("expected access_token, got %v", resp)
 	}
-	if resp["roles"] == nil {
-		t.Fatalf("expected roles in response, got %v", resp)
+	if resp["role"] == nil {
+		t.Fatalf("expected role in response, got %v", resp)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

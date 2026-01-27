@@ -15,10 +15,10 @@ func RegisterDeviceReadRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewDeviceReadHandler(repo)
 
 	r.Route("/devices", func(r chi.Router) {
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "devices.read")).Post("/query", handler.Query)
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "devices.read")).Get("/search", handler.Search)
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "devices.read")).Get("/counts/regions", handler.CountByRegion)
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "devices.read")).Get("/", handler.List)
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "devices.read")).Get("/{hostName}", handler.Get)
+		r.With(authmw.RequirePermission(db, "devices.read")).Post("/query", handler.Query)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/search", handler.Search)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/counts/regions", handler.CountByRegion)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/", handler.List)
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/{hostName}", handler.Get)
 	})
 }

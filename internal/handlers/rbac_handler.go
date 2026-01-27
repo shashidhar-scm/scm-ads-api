@@ -12,6 +12,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"scm/internal/middleware"
 	"scm/internal/models"
 	"scm/internal/repository"
 )
@@ -220,8 +221,20 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 	if ids == nil {
 		ids = []string{}
 	}
+
+	perms := make([]models.Permission, 0, len(ids))
+	for _, pid := range ids {
+		p, err := h.permissions.GetByID(r.Context(), pid)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_role_permissions_failed", "Failed to get role permissions")
+			return
+		}
+		if p != nil {
+			perms = append(perms, *p)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"permission_ids": ids})
+	_ = json.NewEncoder(w).Encode(map[string]any{"permissions": perms})
 }
 
 // @Tags Roles
@@ -411,7 +424,7 @@ func (h *RBACHandler) DeletePermission(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Tags UserRoles
-// @Summary List user role assignments
+// @Summary Get user role
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "User ID"
@@ -430,31 +443,50 @@ func (h *RBACHandler) ListUserRoles(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_user_roles_failed", "Failed to list user roles")
 		return
 	}
-	if roles == nil {
-		roles = []models.UserRoleAssignment{}
+	var out models.UserRole
+	if len(roles) > 0 {
+		ro, err := h.roles.GetByID(r.Context(), roles[0].RoleID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "list_user_roles_failed", "Failed to list user roles")
+			return
+		}
+		if ro != nil {
+			out = models.UserRole{ID: ro.ID, Name: ro.Name}
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"roles": roles})
+	_ = json.NewEncoder(w).Encode(map[string]any{"role": out})
 }
 
 // @Tags UserRoles
-// @Summary Replace user role assignments
+// @Summary Replace user role
 // @Security BearerAuth
 // @Accept json
 // @Produce json
 // @Param id path string true "User ID"
-// @Param body body models.SetUserRolesRequest true "Set user roles request"
+// @Param body body models.SetUserRoleRequest true "Set user role request"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/users/{id}/roles [put]
 func (h *RBACHandler) SetUserRoles(w http.ResponseWriter, r *http.Request) {
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	if strings.TrimSpace(callerID) == "" {
+		writeJSONErrorResponse(w, http.StatusUnauthorized, "unauthorized", "missing user identity")
+		return
+	}
+	isSuper, err := h.userRoles.IsSuperAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "set_user_roles_failed", "Failed to set user roles")
+		return
+	}
+
 	userID := chi.URLParam(r, "id")
 	if userID == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
 		return
 	}
-	var req models.SetUserRolesRequest
+	var req models.SetUserRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
@@ -463,7 +495,26 @@ func (h *RBACHandler) SetUserRoles(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", validationMessage(err))
 		return
 	}
-	if err := h.userRoles.ReplaceUserRoles(r.Context(), userID, req.Roles); err != nil {
+
+	if !isSuper {
+		current, err := h.userRoles.ListUserRoleAssignments(r.Context(), userID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "set_user_roles_failed", "Failed to set user roles")
+			return
+		}
+		currentRoleID := ""
+		if len(current) > 0 {
+			currentRoleID = strings.TrimSpace(current[0].RoleID)
+		}
+		requestedRoleID := strings.TrimSpace(req.RoleID)
+		if currentRoleID != requestedRoleID {
+			writeJSONErrorResponse(w, http.StatusForbidden, "forbidden", "You are not allowed to change the role")
+			return
+		}
+		writeJSONMessage(w, http.StatusOK, "user roles updated")
+		return
+	}
+	if err := h.userRoles.ReplaceUserRoles(r.Context(), userID, []models.UserRoleAssignment{{RoleID: req.RoleID}}); err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "set_user_roles_failed", "Failed to set user roles")
 		return
 	}

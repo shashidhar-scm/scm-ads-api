@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,51 @@ import (
 	"scm/internal/models"
 	"scm/internal/services"
 )
+
+func (h *CampaignHandler) isGlobalAdmin(ctx context.Context, userID string) (bool, error) {
+	if h.db == nil || strings.TrimSpace(userID) == "" {
+		return false, nil
+	}
+	ur := repository.NewUserRoleRepository(h.db)
+	isSuper, err := ur.IsSuperAdmin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	isAdmin, err := ur.IsAdmin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return isSuper || isAdmin, nil
+}
+
+func (h *CampaignHandler) ensureAdvertiserOwnedByCaller(ctx context.Context, advertiserID string, callerID string) (bool, error) {
+	if h.db == nil {
+		return false, nil
+	}
+	var ok bool
+	if err := h.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM advertisers WHERE id = $1 AND created_by = $2)`, advertiserID, callerID).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+func (h *CampaignHandler) ensureCampaignOwnedByCaller(ctx context.Context, campaignID string, callerID string) (bool, error) {
+	if h.db == nil {
+		return false, nil
+	}
+	var ok bool
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM campaigns c
+			JOIN advertisers a ON a.id = c.advertiser_id
+			WHERE c.id = $1 AND a.created_by = $2
+		)
+	`, campaignID, callerID).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
 
 func writeJSONErrorCampaign(w http.ResponseWriter, status int, code string, message string) {
     w.Header().Set("Content-Type", "application/json")
@@ -72,6 +118,24 @@ func (h *CampaignHandler) GetCampaignImpressions(w http.ResponseWriter, r *http.
         return
     }
 
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+			return
+		}
+	}
+
     if _, err := h.repo.GetByID(r.Context(), campaignID); err != nil {
         if err == sql.ErrNoRows {
             writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
@@ -108,7 +172,6 @@ func (h *CampaignHandler) GetCampaignImpressions(w http.ResponseWriter, r *http.
 // @Security BearerAuth
 // @Accept json
 // @Produce json
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param body body models.CreateCampaignRequest true "Create campaign request"
 // @Success 201 {object} models.Campaign
 // @Failure 400 {object} map[string]interface{}
@@ -126,6 +189,24 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
         writeJSONErrorCampaign(w, http.StatusBadRequest, "validation_error", err.Error())
         return
     }
+
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorCampaign(w, http.StatusInternalServerError, "create_campaign_failed", "Failed to create campaign")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureAdvertiserOwnedByCaller(r.Context(), req.AdvertiserID, callerID)
+		if err != nil {
+			writeJSONErrorCampaign(w, http.StatusInternalServerError, "create_campaign_failed", "Failed to create campaign")
+			return
+		}
+		if !ok {
+			writeJSONErrorCampaign(w, http.StatusForbidden, "forbidden", "Invalid advertiser")
+			return
+		}
+	}
 
     campaign := &models.Campaign{
         Name:         req.Name,
@@ -166,7 +247,6 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Campaign ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} models.Campaign
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
@@ -178,6 +258,24 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Campaign ID is required")
         return
     }
+
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_campaign_failed", "Failed to fetch campaign")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+			return
+		}
+	}
 
     campaign, err := h.repo.GetByID(r.Context(), campaignID)
     if err != nil {
@@ -197,7 +295,6 @@ func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
 // @Summary List campaigns
 // @Security BearerAuth
 // @Produce json
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -343,7 +440,6 @@ func (h *CampaignHandler) SearchCampaigns(w http.ResponseWriter, r *http.Request
 // @Security BearerAuth
 // @Produce json
 // @Param advertiserID path string true "Advertiser ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
@@ -355,10 +451,10 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
         return
     }
 
-    if _, err := uuid.Parse(advertiserID); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "advertiserID must be a valid UUID")
-        return
-    }
+	if _, err := uuid.Parse(advertiserID); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "advertiserID must be a valid UUID")
+		return
+	}
 
 	p, err := parsePaginationParams(r, 50, 200)
 	if err != nil {
@@ -366,11 +462,31 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
 		return
 	}
 
-    filter := interfaces.CampaignFilter{
-        AdvertiserID: advertiserID,
-        Limit:        p.limit,
-        Offset:       p.offset,
-    }
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+		return
+	}
+
+	filter := interfaces.CampaignFilter{
+		AdvertiserID: advertiserID,
+		Limit:        p.limit,
+		Offset:       p.offset,
+	}
+
+	if !isGlobalAdmin {
+		ok, err := h.ensureAdvertiserOwnedByCaller(r.Context(), advertiserID, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "advertiser_not_found", "Advertiser not found")
+			return
+		}
+		filter.CreatedByUserID = &callerID
+	}
 
 	total, err := h.repo.Count(r.Context(), filter)
 	if err != nil {
@@ -378,21 +494,20 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
 		return
 	}
 
-    summary, err := h.repo.Summary(r.Context(), filter)
-    if err != nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
-        return
-    }
+	summary, err := h.repo.Summary(r.Context(), filter)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+		return
+	}
 
-    campaigns, err := h.repo.List(r.Context(), filter)
-    if err != nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
-        return
-    }
-
-    if campaigns == nil {
-        campaigns = []*models.Campaign{}
-    }
+	campaigns, err := h.repo.List(r.Context(), filter)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "list_campaigns_failed", "Failed to list campaigns")
+		return
+	}
+	if campaigns == nil {
+		campaigns = []*models.Campaign{}
+	}
 
 	data := map[string]any{
 		"active_campaign_count": summary.ActiveCampaignCount,
@@ -409,7 +524,6 @@ func (h *CampaignHandler) ListCampaignsByAdvertiser(w http.ResponseWriter, r *ht
 // @Accept json
 // @Produce json
 // @Param id path string true "Campaign ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Param body body models.UpdateCampaignRequest true "Update campaign request"
 // @Success 200 {object} models.Campaign
 // @Failure 400 {object} map[string]interface{}
@@ -433,6 +547,24 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
         writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
         return
     }
+
+    callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "update_campaign_failed", "Failed to update campaign")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCampaignOwnedByCaller(r.Context(), id, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "update_campaign_failed", "Failed to update campaign")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+			return
+		}
+	}
 
     // First, get the existing campaign
     existingCampaign, err := h.repo.GetByID(r.Context(), id)
@@ -494,11 +626,9 @@ func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request)
 // @Security BearerAuth
 // @Produce json
 // @Param id path string true "Campaign ID"
-// @Param X-Advertiser-Id header string false "Active advertiser scope (required for advertiser-scoped users)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
-// @Failure 409 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/campaigns/{id}/ [delete]
 func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request) {
@@ -510,7 +640,25 @@ func (h *CampaignHandler) DeleteCampaign(w http.ResponseWriter, r *http.Request)
         return
     }
 
-    err := h.repo.Delete(r.Context(), campaignID)
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_campaign_failed", "Failed to delete campaign")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_campaign_failed", "Failed to delete campaign")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusNotFound, "campaign_not_found", "Campaign not found")
+			return
+		}
+	}
+
+    err = h.repo.Delete(r.Context(), campaignID)
     if err != nil {
         var blocked *interfaces.DeletionBlockedError
         if errors.As(err, &blocked) {

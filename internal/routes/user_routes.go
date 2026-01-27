@@ -14,13 +14,13 @@ func RegisterUserRoutes(router chi.Router, db *sql.DB) {
     userHandler := handlers.NewUserHandler(userRepo, db)
 
     router.Route("/users", func(r chi.Router) {
-		r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.read")).Get("/", userHandler.ListUsers)
+		r.With(authmw.RequirePermission(db, "users.read")).Get("/", userHandler.ListUsers)
 
 		r.Route("/{id}", func(r chi.Router) {
-			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.read")).Get("/", userHandler.GetUser)
-			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.write")).Put("/", userHandler.UpdateUser)
-			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.write")).Put("/password", userHandler.ChangePassword)
-			r.With(authmw.RequirePermissionNoAdvertiserSelection(db, "users.write")).Delete("/", userHandler.DeleteUser)
+			r.With(authmw.RequirePermission(db, "users.read")).Get("/", userHandler.GetUser)
+			r.With(authmw.RequirePermission(db, "users.write")).Put("/", userHandler.UpdateUser)
+			r.With(authmw.RequirePermission(db, "users.write")).Put("/password", userHandler.ChangePassword)
+			r.With(authmw.RequirePermission(db, "users.write")).Delete("/", userHandler.DeleteUser)
 		})
     })
 }

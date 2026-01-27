@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
 	"scm/internal/interfaces"
+	"scm/internal/middleware"
 	"scm/internal/models"
 	"scm/internal/services"
 )
@@ -30,12 +32,28 @@ func (m *mockPopAPI) CampaignImpressions(ctx context.Context, campaignID string)
 }
 
 func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
-	h := NewCampaignHandler(&mockCampaignRepo{}, nil)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	h := NewCampaignHandler(&mockCampaignRepo{}, db)
 	r := chi.NewRouter()
 	r.Get("/campaigns/advertiser/{advertiserID}", h.ListCampaignsByAdvertiser)
 
+	callerID := "user-1"
+	advID := "550e8400-e29b-41d4-a716-446655440000"
+
+	// isGlobalAdmin: IsSuperAdmin=false, IsAdmin=false
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(callerID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(callerID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	// ensureAdvertiserOwnedByCaller: true
+	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(advID, callerID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
 	// valid UUID
-	req := httptest.NewRequest(http.MethodGet, "/campaigns/advertiser/550e8400-e29b-41d4-a716-446655440000", nil)
+	req := httptest.NewRequest(http.MethodGet, "/campaigns/advertiser/"+advID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.CtxUserID, callerID))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -55,6 +73,10 @@ func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
 	}
 	if _, ok := data["campaigns"]; !ok {
 		t.Fatalf("expected campaigns field, got %v", resp)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
 	}
 }
 
