@@ -100,7 +100,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth routes
 		RegisterAuthRoutes(r, db, cfg)
-		RegisterPublicCreativeRoutes(r, db, s3Config)
+		RegisterPublicCreativeRoutes(r, db, s3Config, cfg)
 
         r.Get("/debug/env", func(w http.ResponseWriter, r *http.Request) {
             sanitizeDatabaseURL := func(raw string) string {
@@ -161,7 +161,7 @@ func SetupRoutes(db *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi
 			RegisterCampaignRoutes(r, db, cfg.PopAPIBaseURL)
             // Register advertiser routes
             RegisterAdvertiserRoutes(r, db)
-            RegisterCreativeRoutes(r, db, s3Config)
+			RegisterCreativeRoutes(r, db, s3Config, cfg)
 			// Initialize CityPost console client
 			client := services.NewCityPostConsoleClient(
 				cfg.CityPostConsoleBaseURL,

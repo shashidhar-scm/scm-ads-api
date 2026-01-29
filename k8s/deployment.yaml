@@ -27,6 +27,10 @@ data:
   VERSION: "0.0.56"
   DASHBOARD_BASE_URL: "https://pivotal-cms.web.app/login"
   POP_IMPRESSIONS_SYNC_INTERVAL_SECONDS: "30"
+  VENUES_CACHE_TTL_SECONDS: "300"
+  SUGGEST_VENUES_WORKERS: "4"
+  REKOGNITION_TIMEOUT_MS: "7000"
+  ENABLE_REKOGNITION_LABEL_FALLBACK: "false"
 kind: ConfigMap
 metadata:
   name: scm-ads-api

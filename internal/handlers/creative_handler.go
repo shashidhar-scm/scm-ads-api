@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,10 +46,23 @@ type CreativeHandler struct {
     bucket    string
     publicBaseURL string
 	db        *sql.DB
+
+	suggestVenuesWorkers   int
+	rekognitionTimeout     time.Duration
+	enableLabelFallback    bool
+
+	venuesCacheMu      sync.Mutex
+	venuesCacheFetched time.Time
+	venuesCacheTTL     time.Duration
+	venuesCache        []*models.Venue
 }
 
 
-func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config, db *sql.DB) *CreativeHandler {
+func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config, db *sql.DB, cfg *config.Config) *CreativeHandler {
+	if cfg == nil {
+		cfg = config.Load()
+	}
+
     return &CreativeHandler{
         repo:      repo,
         campaignRepo: campaignRepo,
@@ -57,7 +71,40 @@ func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfa
         publicBaseURL: s3Config.PublicBaseURL,
         validator: validator.New(),
 		db:        db,
+		suggestVenuesWorkers: cfg.SuggestVenuesWorkers,
+		rekognitionTimeout:   time.Duration(cfg.RekognitionTimeoutMs) * time.Millisecond,
+		enableLabelFallback:  cfg.EnableRekognitionLabelFallback,
+		venuesCacheTTL:       time.Duration(cfg.VenuesCacheTTLSeconds) * time.Second,
     }
+}
+
+func (h *CreativeHandler) getVenuesCached(ctx context.Context) ([]*models.Venue, error) {
+	if h.venuesCacheTTL <= 0 {
+		return h.listAllVenues(ctx)
+	}
+
+	h.venuesCacheMu.Lock()
+	if h.venuesCache != nil && time.Since(h.venuesCacheFetched) < h.venuesCacheTTL {
+		cached := make([]*models.Venue, len(h.venuesCache))
+		copy(cached, h.venuesCache)
+		h.venuesCacheMu.Unlock()
+		return cached, nil
+	}
+	h.venuesCacheMu.Unlock()
+
+	venues, err := h.listAllVenues(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	h.venuesCacheMu.Lock()
+	h.venuesCache = venues
+	h.venuesCacheFetched = time.Now()
+	h.venuesCacheMu.Unlock()
+
+	copyOut := make([]*models.Venue, len(venues))
+	copy(copyOut, venues)
+	return copyOut, nil
 }
 
 func (h *CreativeHandler) isGlobalAdmin(ctx context.Context, userID string) (bool, error) {
@@ -119,6 +166,18 @@ func getEnvOrDefault(key string, defaultValue string) string {
 		return defaultValue
 	}
 	return v
+}
+
+func getEnvIntOrDefault(key string, defaultValue int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return defaultValue
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultValue
+	}
+	return i
 }
 
 func (h *CreativeHandler) ListCreativesByDevice(w http.ResponseWriter, r *http.Request) {
@@ -737,6 +796,37 @@ func (h *CreativeHandler) detectText(ctx context.Context, imageBytes []byte) (st
 	return strings.Join(lines, "\n"), nil
 }
 
+func (h *CreativeHandler) detectLabels(ctx context.Context, imageBytes []byte, maxLabels int32) ([]string, error) {
+	client, err := h.ensureRekognitionClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if maxLabels <= 0 {
+		maxLabels = 10
+	}
+	out, err := client.DetectLabels(ctx, &rekognition.DetectLabelsInput{
+		Image:     &types.Image{Bytes: imageBytes},
+		MaxLabels: aws.Int32(maxLabels),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil || len(out.Labels) == 0 {
+		return []string{}, nil
+	}
+	labels := make([]string, 0, len(out.Labels))
+	for _, l := range out.Labels {
+		if l.Name == nil {
+			continue
+		}
+		v := strings.TrimSpace(*l.Name)
+		if v != "" {
+			labels = append(labels, v)
+		}
+	}
+	return labels, nil
+}
+
 func isOCRNotConfiguredError(err error) bool {
 	if err == nil {
 		return false
@@ -790,6 +880,7 @@ func (h *CreativeHandler) listAllVenues(ctx context.Context) ([]*models.Venue, e
 // @Accept multipart/form-data
 // @Produce json
 // @Param files formData file true "Creative image files"
+// @Param description formData string false "Optional description/context provided by the user to improve suggestions"
 // @Param top_k formData int false "Maximum venues to return per file" default(5)
 // @Success 200 {object} models.CreativeSuggestionsResponse
 // @Failure 400 {object} map[string]interface{}
@@ -801,6 +892,10 @@ func (h *CreativeHandler) SuggestVenues(w http.ResponseWriter, r *http.Request) 
 		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
 		return
 	}
+
+	description := strings.TrimSpace(r.FormValue("description"))
+	enableLabelFallback := h.enableLabelFallback
+	rekognitionTimeout := h.rekognitionTimeout
 
 	topK := 5
 	if raw := strings.TrimSpace(r.FormValue("top_k")); raw != "" {
@@ -826,86 +921,138 @@ func (h *CreativeHandler) SuggestVenues(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	results := make([]models.CreativeFileSuggestionResult, 0, len(files))
-	needVenues := false
-	for _, fh := range files {
+	results := make([]models.CreativeFileSuggestionResult, len(files))
+	processableIdx := make([]int, 0, len(files))
+	for i, fh := range files {
 		res := models.CreativeFileSuggestionResult{FileName: fh.Filename, Status: "ok"}
 		ct := fh.Header.Get("Content-Type")
 		if !isSupportedImageContentType(ct) {
 			res.Status = "error"
 			res.Error = "unsupported file type"
-			results = append(results, res)
+			results[i] = res
 			continue
 		}
-		needVenues = true
-		break
+		results[i] = res
+		processableIdx = append(processableIdx, i)
 	}
 
-	if !needVenues {
+	if len(processableIdx) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(models.CreativeSuggestionsResponse{Data: models.CreativeSuggestionsData{Results: results}})
 		return
 	}
 
-	venues, err := h.listAllVenues(r.Context())
+	venues, err := h.getVenuesCached(r.Context())
 	if err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "suggestions_failed", "Failed to load venues")
 		return
 	}
 
-	// Rebuild results with full processing
-	results = make([]models.CreativeFileSuggestionResult, 0, len(files))
-	for _, fh := range files {
+	workerCount := h.suggestVenuesWorkers
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+	if workerCount > 8 {
+		workerCount = 8
+	}
+	if workerCount > len(processableIdx) {
+		workerCount = len(processableIdx)
+	}
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+
+	processOne := func(i int) {
+		fh := files[i]
 		res := models.CreativeFileSuggestionResult{FileName: fh.Filename, Status: "ok"}
-		ct := fh.Header.Get("Content-Type")
-		if !isSupportedImageContentType(ct) {
-			res.Status = "error"
-			res.Error = "unsupported file type"
-			results = append(results, res)
-			continue
-		}
 
 		f, err := fh.Open()
 		if err != nil {
 			res.Status = "error"
 			res.Error = "failed to open file"
-			results = append(results, res)
-			continue
+			results[i] = res
+			return
 		}
 		b, err := io.ReadAll(io.LimitReader(f, 8<<20))
 		_ = f.Close()
 		if err != nil {
 			res.Status = "error"
 			res.Error = "failed to read file"
-			results = append(results, res)
-			continue
+			results[i] = res
+			return
 		}
 
-		// Best-effort detect text.
-		extracted, err := h.detectText(r.Context(), b)
-		if err != nil {
-			res.Status = "error"
-			log.Printf("rekognition detect text failed: file=%s err=%v", fh.Filename, err)
-			if isOCRNotConfiguredError(err) {
-				res.Error = "ocr_not_configured"
-			} else {
-				res.Error = "ocr_failed"
+		scoreInput := ""
+		if description != "" {
+			scoreInput = description
+		} else {
+			ctx := r.Context()
+			var cancel context.CancelFunc
+			if rekognitionTimeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, rekognitionTimeout)
 			}
-			results = append(results, res)
-			continue
+			extracted, err := h.detectText(ctx, b)
+			if cancel != nil {
+				cancel()
+			}
+			if err != nil {
+				res.Status = "error"
+				log.Printf("rekognition detect text failed: file=%s err=%v", fh.Filename, err)
+				if isOCRNotConfiguredError(err) {
+					res.Error = "ocr_not_configured"
+				} else {
+					res.Error = "ocr_failed"
+				}
+				results[i] = res
+				return
+			}
+			res.ExtractedText = extracted
+			scoreInput = strings.TrimSpace(extracted)
 		}
-		res.ExtractedText = extracted
-		suggestions, keywords := scoreVenues(venues, extracted, topK)
+
+		if strings.TrimSpace(scoreInput) == "" && enableLabelFallback {
+			ctx := r.Context()
+			var cancel context.CancelFunc
+			if rekognitionTimeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, rekognitionTimeout)
+			}
+			labels, err := h.detectLabels(ctx, b, 12)
+			if cancel != nil {
+				cancel()
+			}
+			if err != nil {
+				log.Printf("rekognition detect labels failed: file=%s err=%v", fh.Filename, err)
+			} else if len(labels) > 0 {
+				scoreInput = strings.Join(labels, " ")
+			}
+		}
+
+		suggestions, keywords := scoreVenues(venues, scoreInput, topK)
 		res.Suggestions = suggestions
 		res.Keywords = keywords
-		if strings.TrimSpace(extracted) == "" {
-			// fallback: use filename tokens
+		if strings.TrimSpace(scoreInput) == "" {
 			res.Keywords = tokenizeForSuggestions(fh.Filename)
 			res.Suggestions, _ = scoreVenues(venues, fh.Filename, topK)
 		}
-		results = append(results, res)
+		results[i] = res
 	}
+
+	for wkr := 0; wkr < workerCount; wkr++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				processOne(i)
+			}
+		}()
+	}
+
+	for _, i := range processableIdx {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

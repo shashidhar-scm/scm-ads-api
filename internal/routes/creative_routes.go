@@ -11,18 +11,18 @@ import (
     "scm/internal/repository"
 )
 
-func RegisterPublicCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config) {
+func RegisterPublicCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config, cfg *config.Config) {
 	creativeRepo := repository.NewCreativeRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db)
-	creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db)
+	creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db, cfg)
 
 	router.Get("/creatives/device/{device}", creativeHandler.ListCreativesByDevice)
 }
 
-func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config) {
+func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config, cfg *config.Config) {
     creativeRepo := repository.NewCreativeRepository(db)
     campaignRepo := repository.NewCampaignRepository(db)
-    creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db)
+	creativeHandler := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db, cfg)
 
     router.Route("/creatives", func(r chi.Router) {
 		r.With(authmw.RequirePermission(db, "creatives.read")).Get("/search", creativeHandler.SearchCreatives)

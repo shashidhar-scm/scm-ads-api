@@ -19,6 +19,11 @@ type Config struct {
 	RateLimitWindowSeconds int
 	RateLimitMax           int
 
+	VenuesCacheTTLSeconds            int
+	SuggestVenuesWorkers             int
+	RekognitionTimeoutMs             int
+	EnableRekognitionLabelFallback   bool
+
 	GoogleClientID string
 
 	CityPostConsoleBaseURL   string
@@ -67,6 +72,11 @@ func Load() *Config {
 		AuthReturnResetToken: getEnvBool("AUTH_RETURN_RESET_TOKEN", false),
 		RateLimitWindowSeconds: getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60),
 		RateLimitMax:           getEnvInt("RATE_LIMIT_MAX", 120),
+
+		VenuesCacheTTLSeconds:          getEnvInt("VENUES_CACHE_TTL_SECONDS", 300),
+		SuggestVenuesWorkers:           getEnvInt("SUGGEST_VENUES_WORKERS", 4),
+		RekognitionTimeoutMs:           getEnvInt("REKOGNITION_TIMEOUT_MS", 7000),
+		EnableRekognitionLabelFallback: getEnvBool("ENABLE_REKOGNITION_LABEL_FALLBACK", false),
 
 		JWTSecret:           getEnv("JWT_SECRET", "dev-secret"),
 		JWTExpiresInSeconds: getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),

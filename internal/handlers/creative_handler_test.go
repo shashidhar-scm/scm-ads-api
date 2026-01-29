@@ -163,7 +163,7 @@ func (noopCampaignRepo) ListByEndDate(ctx context.Context, endDate time.Time) ([
 }
 
 func TestUploadCreativeMissingCampaignIDReturnsJSON(t *testing.T) {
-	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil)
+	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/creatives/upload", nil)
 	// No multipart => ParseMultipartForm fails => JSON error
@@ -254,7 +254,7 @@ func TestScoreVenuesRetailAndFamilyIntentBoosts(t *testing.T) {
 }
 
 func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
-	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil)
+	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/creatives/suggestions", nil)
 	w := httptest.NewRecorder()
 	h.SuggestVenues(w, req)
@@ -267,7 +267,7 @@ func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
 }
 
 func TestSuggestVenuesUnsupportedContentTypeReturnsFileError(t *testing.T) {
-	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil)
+	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
 
 	form := &multipart.Form{File: map[string][]*multipart.FileHeader{}}
 	fh := &multipart.FileHeader{Filename: "x.txt", Header: textproto.MIMEHeader{}}
@@ -290,7 +290,7 @@ func TestListCreativesByDeviceWeightedRotationPerCampaign(t *testing.T) {
 		{ID: "c1b", CampaignID: "camp1", PlayWeight: 25, UploadedAt: baseTime.Add(-1 * time.Hour)},
 		{ID: "c2a", CampaignID: "camp2", PlayWeight: 100, UploadedAt: baseTime.Add(-3 * time.Hour)},
 	}}
-	h := NewCreativeHandler(repo, noopCampaignRepo{}, &config.S3Config{}, nil)
+	h := NewCreativeHandler(repo, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
 
 	withDeviceParam := func(req *http.Request, device string) *http.Request {
 		rctx := chi.NewRouteContext()
