@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"scm/internal/config"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 )
 
 type endpointCase struct {
@@ -25,7 +26,7 @@ func TestAPIv1EndpointsAreWired(t *testing.T) {
 	}
 	defer db.Close()
 
-	r := SetupRoutes(db, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
 
 	defaultNotFoundBody := "404 page not found\n"
 
@@ -93,6 +94,9 @@ func TestAPIv1EndpointsAreWired(t *testing.T) {
 
 		// Protected: Sync
 		{name: "sync console", method: http.MethodPost, path: "/api/v1/sync/console", protected: true, wantStatus: http.StatusUnauthorized},
+
+		// Protected: Replicator
+		{name: "replicator ad_posters", method: http.MethodGet, path: "/api/v1/replicator/ad_posters?city=opt", protected: true, wantStatus: http.StatusUnauthorized},
 
 		// Protected: Projects
 		{name: "projects search", method: http.MethodGet, path: "/api/v1/projects/search?query=x", protected: true, wantStatus: http.StatusUnauthorized},

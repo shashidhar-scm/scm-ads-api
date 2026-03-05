@@ -31,6 +31,7 @@ data:
   SUGGEST_VENUES_WORKERS: "4"
   REKOGNITION_TIMEOUT_MS: "7000"
   ENABLE_REKOGNITION_LABEL_FALLBACK: "false"
+  REPLICATOR_DATABASE_URL: "postgres://appuser:Asterisk@123!@10.128.0.89:5432/scm?sslmode=disable"
 kind: ConfigMap
 metadata:
   name: scm-ads-api
@@ -57,7 +58,7 @@ spec:
     spec:
       containers:
       - name: scm-ads-api
-        image: smartcitymedia/scm-ads-api:0.0.56
+        image: smartcitymedia/scm-ads-api:0.0.72
         envFrom:
           - configMapRef:
               name: scm-ads-api

@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"scm/internal/config"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 )
 
 type healthResp struct {
@@ -26,7 +27,7 @@ func TestRootReturnsJSON(t *testing.T) {
 	}
 	defer db.Close()
 
-	r := SetupRoutes(db, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -57,7 +58,7 @@ func TestHealthDBOK(t *testing.T) {
 
 	mock.ExpectPing()
 
-	r := SetupRoutes(db, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -87,7 +88,7 @@ func TestHealthDBDown(t *testing.T) {
 
 	mock.ExpectPing().WillReturnError(sql.ErrConnDone)
 
-	r := SetupRoutes(db, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

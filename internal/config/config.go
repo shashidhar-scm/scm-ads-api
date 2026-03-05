@@ -9,28 +9,29 @@ import (
 )
 
 type Config struct {
-	Port        string
-	Environment string
-	DatabaseURL string
-	AuthVerboseErrors bool
-	AuthReturnResetToken bool
-	AuthResetPasswordURL string
-	DashboardBaseURL string
+	Port                   string
+	Environment            string
+	DatabaseURL            string
+	ReplicatorDatabaseURL  string
+	AuthVerboseErrors      bool
+	AuthReturnResetToken   bool
+	AuthResetPasswordURL   string
+	DashboardBaseURL       string
 	RateLimitWindowSeconds int
 	RateLimitMax           int
 
-	VenuesCacheTTLSeconds            int
-	SuggestVenuesWorkers             int
-	RekognitionTimeoutMs             int
-	EnableRekognitionLabelFallback   bool
+	VenuesCacheTTLSeconds          int
+	SuggestVenuesWorkers           int
+	RekognitionTimeoutMs           int
+	EnableRekognitionLabelFallback bool
 
 	GoogleClientID string
 
-	CityPostConsoleBaseURL   string
-	CityPostConsoleUsername  string
-	CityPostConsolePassword  string
+	CityPostConsoleBaseURL    string
+	CityPostConsoleUsername   string
+	CityPostConsolePassword   string
 	CityPostConsoleAuthScheme string
-	PopAPIBaseURL            string
+	PopAPIBaseURL             string
 
 	JWTSecret           string
 	JWTExpiresInSeconds int64
@@ -45,6 +46,7 @@ type Config struct {
 
 func Load() *Config {
 	databaseURL := os.Getenv("DATABASE_URL")
+	replicatorDatabaseURL := strings.TrimSpace(os.Getenv("REPLICATOR_DATABASE_URL"))
 	if databaseURL == "" {
 		host := getEnv("PSQL_HOST", "localhost")
 		port := getEnv("PSQL_PORT", "5432")
@@ -65,11 +67,12 @@ func Load() *Config {
 	}
 
 	return &Config{
-		Port:        getEnv("PORT", "9000"),
-		Environment: getEnv("ENVIRONMENT", "development"),
-		DatabaseURL: databaseURL,
-		AuthVerboseErrors: getEnvBool("AUTH_VERBOSE_ERRORS", false),
-		AuthReturnResetToken: getEnvBool("AUTH_RETURN_RESET_TOKEN", false),
+		Port:                   getEnv("PORT", "9000"),
+		Environment:            getEnv("ENVIRONMENT", "development"),
+		DatabaseURL:            databaseURL,
+		ReplicatorDatabaseURL:  replicatorDatabaseURL,
+		AuthVerboseErrors:      getEnvBool("AUTH_VERBOSE_ERRORS", false),
+		AuthReturnResetToken:   getEnvBool("AUTH_RETURN_RESET_TOKEN", false),
 		RateLimitWindowSeconds: getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60),
 		RateLimitMax:           getEnvInt("RATE_LIMIT_MAX", 120),
 
@@ -78,11 +81,11 @@ func Load() *Config {
 		RekognitionTimeoutMs:           getEnvInt("REKOGNITION_TIMEOUT_MS", 7000),
 		EnableRekognitionLabelFallback: getEnvBool("ENABLE_REKOGNITION_LABEL_FALLBACK", false),
 
-		JWTSecret:           getEnv("JWT_SECRET", "dev-secret"),
-		JWTExpiresInSeconds: getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
+		JWTSecret:            getEnv("JWT_SECRET", "dev-secret"),
+		JWTExpiresInSeconds:  getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
 		AuthResetPasswordURL: getEnv("AUTH_RESET_PASSWORD_URL", "https://scm-ads.citypost.us/reset-password"),
-		DashboardBaseURL:    getEnv("DASHBOARD_BASE_URL", "https://scm-ads.citypost.us"),
-		GoogleClientID:      getEnv("GOOGLE_CLIENT_ID", ""),
+		DashboardBaseURL:     getEnv("DASHBOARD_BASE_URL", "https://scm-ads.citypost.us"),
+		GoogleClientID:       getEnv("GOOGLE_CLIENT_ID", ""),
 
 		CityPostConsoleBaseURL:    getEnv("CITYPOST_CONSOLE_BASE_URL", "https://consoleapi.citypost.us/scm-cloud"),
 		CityPostConsoleUsername:   getEnv("CITYPOST_CONSOLE_USERNAME", "girish@smartcitymedia.us"),
