@@ -219,3 +219,16 @@
 - GeoPath (geopath.org) explored as a future data source for audience-based kiosk recommendations.
 - Current device payload includes lat/lng under `device_config.position` and `device_config.LongLat`.
 - Planned path: map device lat/lng to GeoPath markets (polygons) and score devices using GeoPath audience indices + impressions; fallback uses existing geo filters + transit (GTFS) signals + POP/impressions proxies.
+
+## 2026-03-05
+
+### Legacy SCM API compatibility (replicator-backed)
+- Added legacy endpoints under `/scm-api/*` to support existing clients.
+- Implemented a new `LegacyHandler` that reads legacy JSON documents from the replicator Postgres database (JSONB columns), normalizes Mongo-style wrappers (e.g. `$oid`, `$date`), and returns legacy-shaped responses.
+- Added legacy route registration (Chi) in `internal/routes/legacy_routes.go` and wired it into the main router.
+
+### Replicator endpoints
+- Added a `ReplicatorHandler` and route registration to expose replicator-related status/utility endpoints.
+
+### Deployment/config updates
+- Updated `k8s/deployment.yaml` to stop shipping AWS credentials via config map (set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` to empty), relying on the runtime environment/credential chain instead.
