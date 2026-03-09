@@ -47,6 +47,9 @@ type Config struct {
 func Load() *Config {
 	databaseURL := os.Getenv("DATABASE_URL")
 	replicatorDatabaseURL := strings.TrimSpace(os.Getenv("REPLICATOR_DATABASE_URL"))
+	if replicatorDatabaseURL == "" {
+		replicatorDatabaseURL = "postgres://postgres:asterisk@localhost:5432/scm?sslmode=disable"
+	}
 	if databaseURL == "" {
 		host := getEnv("PSQL_HOST", "localhost")
 		port := getEnv("PSQL_PORT", "5432")

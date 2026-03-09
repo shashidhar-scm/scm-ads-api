@@ -327,15 +327,19 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 	loopQuery := `SELECT data
 		FROM citypost.loop_posters
 		WHERE city = $1
-			AND (status = 'ACTIVE' OR status IS NULL OR btrim(status) = '')
+			AND (status IS NULL OR btrim(status) = '' OR upper(btrim(status)) = 'ACTIVE')
 			AND (
-				data->>'loopPosterId' = $2
-				OR data->>'device_code' = $2
-				OR data->>'device_type' = $2
-				OR data->>'kiosksId' = $2
+				lower(btrim(data->>'loopPosterId')) = lower($2)
+				OR lower(btrim(data->>'device_code')) = lower($2)
+				OR lower(btrim(data->>'device_type')) = lower($2)
+				OR lower(btrim(data->>'kiosksId')) = lower($2)
 				OR (
 					jsonb_typeof(data->'kiosksId') = 'array'
-					AND data->'kiosksId' ? $2
+					AND EXISTS (
+						SELECT 1
+						FROM jsonb_array_elements_text(data->'kiosksId') AS k(v)
+						WHERE lower(btrim(k.v)) = lower($2)
+					)
 				)
 			)
 		ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
@@ -369,14 +373,19 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 			COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE') AS status
 		FROM citypost.posters
 		WHERE city = $1
-			AND (status = 'ACTIVE' OR status IS NULL OR btrim(status) = '')
-			AND poster_id = $2
+			AND (status IS NULL OR btrim(status) = '' OR upper(btrim(status)) = 'ACTIVE')
+			AND lower(btrim(poster_id)) = lower($2)
 		LIMIT 1`
 	adPosterQuery := `SELECT data
 		FROM citypost.ad_posters
 		WHERE city = $1
-			AND status = 'ACTIVE'
-			AND external_id = $2
+			AND upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) = 'ACTIVE'
+			AND (
+				lower(btrim(NULLIF(data->>'adPosterId', ''))) = lower($2)
+				OR lower(btrim(NULLIF(data->>'id', ''))) = lower($2)
+				OR lower(btrim(NULLIF(data->>'external_id', ''))) = lower($2)
+				OR lower(btrim(external_id)) = lower($2)
+			)
 		LIMIT 1`
 
 	for _, cardID := range loopDoc.Cards {
