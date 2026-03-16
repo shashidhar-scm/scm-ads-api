@@ -2,11 +2,17 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
+
+	"scm/internal/models"
+	"scm/internal/repository"
 )
 
 func normalizeLegacyDateString(s string) string {
@@ -98,11 +104,17 @@ func normalizeLegacyDoc(raw []byte) ([]byte, error) {
 }
 
 type LegacyHandler struct {
+	db        *sql.DB
 	replicaDB *sql.DB
+	creative  repository.CreativeRepository
 }
 
-func NewLegacyHandler(replicaDB *sql.DB) *LegacyHandler {
-	return &LegacyHandler{replicaDB: replicaDB}
+func NewLegacyHandler(db *sql.DB, replicaDB *sql.DB) *LegacyHandler {
+	var creativeRepo repository.CreativeRepository
+	if db != nil {
+		creativeRepo = repository.NewCreativeRepository(db)
+	}
+	return &LegacyHandler{db: db, replicaDB: replicaDB, creative: creativeRepo}
 }
 
 // GetTheme handles /scm-api/theme?theme_id=...
@@ -154,6 +166,136 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *LegacyHandler) pickDeviceCreative(ctx context.Context, device string) *models.Creative {
+	device = strings.TrimSpace(device)
+	if device == "" || h.creative == nil {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	items, err := h.creative.ListByDevice(ctx, device, true, now, 0, 0)
+	if err != nil || len(items) == 0 {
+		items, _ = h.creative.ListByDevice(ctx, device, false, now, 0, 0)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	byCampaign := make(map[string][]*models.Creative)
+	for _, c := range items {
+		if c == nil {
+			continue
+		}
+		cid := strings.TrimSpace(c.CampaignID)
+		if cid == "" {
+			continue
+		}
+		byCampaign[cid] = append(byCampaign[cid], c)
+	}
+	if len(byCampaign) == 0 {
+		return nil
+	}
+
+	campaignIDs := make([]string, 0, len(byCampaign))
+	for cid := range byCampaign {
+		campaignIDs = append(campaignIDs, cid)
+	}
+	sort.Strings(campaignIDs)
+
+	selected := make([]*models.Creative, 0, len(campaignIDs))
+	for _, campaignID := range campaignIDs {
+		cs := byCampaign[campaignID]
+		if len(cs) == 0 {
+			continue
+		}
+		if len(cs) == 1 {
+			selected = append(selected, cs[0])
+			continue
+		}
+		sort.Slice(cs, func(i, j int) bool {
+			if cs[i] == nil {
+				return false
+			}
+			if cs[j] == nil {
+				return true
+			}
+			if cs[i].UploadedAt.Equal(cs[j].UploadedAt) {
+				return cs[i].ID < cs[j].ID
+			}
+			return cs[i].UploadedAt.Before(cs[j].UploadedAt)
+		})
+
+		candidateIDs := make([]string, 0, len(cs))
+		for _, c := range cs {
+			if c != nil {
+				candidateIDs = append(candidateIDs, c.ID)
+			}
+		}
+		nextID, err := h.creative.PickNextRotationalCreative(ctx, device, campaignID, candidateIDs)
+		if err != nil {
+			selected = append(selected, cs[0])
+			continue
+		}
+		picked := cs[0]
+		for _, c := range cs {
+			if c != nil && c.ID == nextID {
+				picked = c
+				break
+			}
+		}
+		selected = append(selected, picked)
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	return selected[0]
+}
+
+func patchLegacyAdPosterWithCreative(raw []byte, placeholderID string, c *models.Creative) ([]byte, bool) {
+	if len(raw) == 0 || c == nil {
+		return raw, false
+	}
+	var doc any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
+		return raw, false
+	}
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return raw, false
+	}
+
+	// Ensure this is the expected placeholder ad poster.
+	if v, _ := m["adPosterId"].(string); strings.TrimSpace(v) != strings.TrimSpace(placeholderID) {
+		return raw, false
+	}
+
+	m["adPosterId"] = c.ID
+	m["creative_id"] = c.ID
+	m["name"] = c.Name
+
+	bc, _ := m["broadCast"].(map[string]any)
+	if bc == nil {
+		bc = map[string]any{}
+	}
+	bc["fileUrl"] = c.URL
+	bc["mobileUrl"] = c.URL
+	bc["fileName"] = c.Name
+	if c.Type == models.CreativeTypeVideo {
+		bc["mimetype"] = "video"
+	} else {
+		bc["mimetype"] = "image"
+	}
+	m["broadCast"] = bc
+
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw, false
+	}
+	return b, true
 }
 
 // GetContent handles /scm-api/getContent?city=...&region=...
@@ -422,6 +564,15 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to normalize poster")
 			return
+		}
+
+		if strings.HasPrefix(id, "ad_poster_default_") && strings.HasSuffix(id, "_0") {
+			c := h.pickDeviceCreative(r.Context(), device)
+			if c != nil {
+				if patched, ok := patchLegacyAdPosterWithCreative(norm, id, c); ok {
+					norm = patched
+				}
+			}
 		}
 
 		if title.Valid || applicationID.Valid || showInLoop.Valid || beaconOnly.Valid || status.Valid {

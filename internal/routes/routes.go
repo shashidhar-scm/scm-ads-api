@@ -65,7 +65,7 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 	})
 
 	RegisterSwaggerRoutes(r)
-	RegisterLegacyRoutes(r, replicatorDB)
+	RegisterLegacyRoutes(r, db, replicatorDB)
 
 	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

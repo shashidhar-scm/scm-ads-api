@@ -8,8 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterLegacyRoutes(r chi.Router, replicatorDB *sql.DB) {
-	h := handlers.NewLegacyHandler(replicatorDB)
+func RegisterLegacyRoutes(r chi.Router, db *sql.DB, replicatorDB *sql.DB) {
+	h := handlers.NewLegacyHandler(db, replicatorDB)
 
 	r.Route("/scm-api", func(r chi.Router) {
 		r.Get("/theme", h.GetTheme)
