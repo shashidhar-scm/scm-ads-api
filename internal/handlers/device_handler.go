@@ -247,6 +247,53 @@ func filterValueWithNode(value any, node *fieldNode) any {
 }
 
 // @Tags Devices
+// @Summary Recommend devices for youth-focused restaurant campaigns
+// @Security BearerAuth
+// @Produce json
+// @Param city query string true "City filter (device_config.city)"
+// @Param region query string true "Region code filter (region.code)"
+// @Param limit query int false "Maximum results to return" default(50)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/devices/recommendations [get]
+func (h *DeviceReadHandler) Recommend(w http.ResponseWriter, r *http.Request) {
+	city := strings.TrimSpace(r.URL.Query().Get("city"))
+	region := strings.TrimSpace(r.URL.Query().Get("region"))
+	if city == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "city is required")
+		return
+	}
+	if region == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "region is required")
+		return
+	}
+
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "limit must be a positive integer")
+			return
+		}
+		limit = v
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	items, err := h.repo.Recommend(r.Context(), city, region, limit)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to recommend devices: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": items})
+}
+
+// @Tags Devices
 // @Summary Search devices
 // @Security BearerAuth
 // @Produce json

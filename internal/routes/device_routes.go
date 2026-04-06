@@ -15,6 +15,7 @@ func RegisterDeviceReadRoutes(r chi.Router, db *sql.DB) {
 	handler := handlers.NewDeviceReadHandler(repo)
 
 	r.Route("/devices", func(r chi.Router) {
+		r.With(authmw.RequirePermission(db, "devices.read")).Get("/recommendations", handler.Recommend)
 		r.With(authmw.RequirePermission(db, "devices.read")).Post("/query", handler.Query)
 		r.With(authmw.RequirePermission(db, "devices.read")).Get("/search", handler.Search)
 		r.With(authmw.RequirePermission(db, "devices.read")).Get("/counts/regions", handler.CountByRegion)

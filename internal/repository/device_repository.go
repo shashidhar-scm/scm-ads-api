@@ -23,12 +23,35 @@ type DeviceRepository interface {
 	CountWithFilters(ctx context.Context, filters DeviceFilters) (int, error)
 	CountByRegion(ctx context.Context, city *string, test *bool) ([]RegionDeviceCount, error)
 	Search(ctx context.Context, term string, city *string, region *string, limit int, offset int) ([]*models.Device, int, error)
+	Recommend(ctx context.Context, city string, region string, limit int) ([]DeviceRecommendation, error)
 }
 
 type RegionDeviceCount struct {
 	Region string `json:"region"`
 	Count  int    `json:"count"`
 	City   *string `json:"city"`
+}
+
+type DeviceRecommendation struct {
+	HostName string  `json:"host_name"`
+	Name     string  `json:"name"`
+	City     *string `json:"city,omitempty"`
+	Region   *string `json:"region,omitempty"`
+	Score    float64 `json:"score"`
+
+	Features map[string]POIFeature `json:"features,omitempty"`
+
+	CollegeCount1km int      `json:"college_count_1km"`
+	CollegeCount2km int      `json:"college_count_2km"`
+	DormCount1km    int      `json:"dorm_count_1km"`
+	HostelCount1km  int      `json:"hostel_count_1km"`
+	NearestCollegeDistanceKm *float64 `json:"nearest_college_distance_km,omitempty"`
+}
+
+type POIFeature struct {
+	Count1km int `json:"count_1km"`
+	Count2km int `json:"count_2km"`
+	NearestDistanceKm *float64 `json:"nearest_distance_km,omitempty"`
 }
 
 type DeviceFilters struct {
@@ -417,7 +440,6 @@ func (r *deviceRepository) CountByRegion(ctx context.Context, city *string, test
 	return out, nil
 }
 
-
 func (r *deviceRepository) Search(ctx context.Context, term string, city *string, region *string, limit int, offset int) ([]*models.Device, int, error) {
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
@@ -496,4 +518,148 @@ func (r *deviceRepository) Search(ctx context.Context, term string, city *string
 	}
 
 	return devices, total, nil
+}
+
+func (r *deviceRepository) Recommend(ctx context.Context, city string, region string, limit int) ([]DeviceRecommendation, error) {
+	city = strings.TrimSpace(city)
+	region = strings.TrimSpace(region)
+	if city == "" {
+		return nil, fmt.Errorf("city is required")
+	}
+	if region == "" {
+		return nil, fmt.Errorf("region is required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	// Score is an MVP heuristic. It assumes device_poi_feature_values is periodically populated.
+	// If a device has no POI feature rows, it will be excluded from recommendations.
+	query := `
+		WITH by_cat AS (
+			SELECT
+				host_name,
+				category,
+				MAX(poi_count) FILTER (WHERE radius_m = 1000) AS count_1km,
+				MAX(poi_count) FILTER (WHERE radius_m = 2000) AS count_2km,
+				MIN(nearest_distance_km) FILTER (WHERE radius_m = 1000) AS nearest_distance_km
+			FROM device_poi_feature_values
+			WHERE city = $1
+			  AND region_code = $2
+			GROUP BY host_name, category
+		),
+		agg AS (
+			SELECT
+				host_name,
+				MAX(count_1km) FILTER (WHERE category = 'college') AS college_count_1km,
+				MAX(count_2km) FILTER (WHERE category = 'college') AS college_count_2km,
+				MAX(count_1km) FILTER (WHERE category = 'dorm') AS dorm_count_1km,
+				MAX(count_1km) FILTER (WHERE category = 'hostel') AS hostel_count_1km,
+				MIN(nearest_distance_km) FILTER (WHERE category = 'college') AS nearest_college_distance_km,
+				MAX(count_1km) FILTER (WHERE category = 'restaurant') AS restaurant_count_1km,
+				MIN(nearest_distance_km) FILTER (WHERE category = 'restaurant') AS nearest_restaurant_distance_km,
+				MAX(count_1km) FILTER (WHERE category = 'pub_bar') AS pub_bar_count_1km,
+				MIN(nearest_distance_km) FILTER (WHERE category = 'pub_bar') AS nearest_pub_bar_distance_km,
+				MAX(count_1km) FILTER (WHERE category = 'hotel') AS hotel_count_1km,
+				MAX(count_1km) FILTER (WHERE category = 'mobile_shop') AS mobile_shop_count_1km,
+				jsonb_object_agg(
+					category,
+					jsonb_build_object(
+						'count_1km', COALESCE(count_1km, 0),
+						'count_2km', COALESCE(count_2km, 0),
+						'nearest_distance_km', nearest_distance_km
+					)
+				) AS features
+			FROM by_cat
+			GROUP BY host_name
+		)
+		SELECT
+			d.host_name,
+			COALESCE(d.name, '') AS name,
+			NULLIF(d.device_config->>'city', '') AS city,
+			NULLIF(d.region->>'code', '') AS region_code,
+			COALESCE(a.college_count_1km, 0) AS college_count_1km,
+			COALESCE(a.college_count_2km, 0) AS college_count_2km,
+			COALESCE(a.dorm_count_1km, 0) AS dorm_count_1km,
+			COALESCE(a.hostel_count_1km, 0) AS hostel_count_1km,
+			a.nearest_college_distance_km,
+			a.features,
+			(
+				5.0 * LN(1 + COALESCE(a.restaurant_count_1km, 0))
+				+ 3.0 * LN(1 + COALESCE(a.pub_bar_count_1km, 0))
+				+ 2.0 * LN(1 + COALESCE(a.college_count_1km, 0))
+				+ 1.0 * LN(1 + COALESCE(a.college_count_2km, 0))
+				+ 2.5 * LN(1 + COALESCE(a.dorm_count_1km, 0))
+				+ 1.0 * LN(1 + COALESCE(a.hotel_count_1km, 0))
+				+ 0.5 * LN(1 + COALESCE(a.mobile_shop_count_1km, 0))
+				- 1.0 * COALESCE(a.nearest_restaurant_distance_km, 5.0)
+				- 0.6 * COALESCE(a.nearest_pub_bar_distance_km, 5.0)
+				- 0.4 * COALESCE(a.nearest_college_distance_km, 5.0)
+			) AS score
+		FROM devices d
+		JOIN agg a ON a.host_name = d.host_name
+		WHERE d.device_config->>'city' = $1
+		  AND d.region->>'code' = $2
+		  AND (d.device_config->>'test' IS NULL OR d.device_config->>'test' <> 'true')
+		ORDER BY score DESC, d.host_name ASC
+		LIMIT $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, city, region, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recommend devices: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]DeviceRecommendation, 0, limit)
+	for rows.Next() {
+		var rec DeviceRecommendation
+		var cityNS sql.NullString
+		var regionNS sql.NullString
+		var nearest sql.NullFloat64
+		var featuresJSON []byte
+		if err := rows.Scan(
+			&rec.HostName,
+			&rec.Name,
+			&cityNS,
+			&regionNS,
+			&rec.CollegeCount1km,
+			&rec.CollegeCount2km,
+			&rec.DormCount1km,
+			&rec.HostelCount1km,
+			&nearest,
+			&featuresJSON,
+			&rec.Score,
+		); err != nil {
+			return nil, fmt.Errorf("scan recommendation: %w", err)
+		}
+		if cityNS.Valid {
+			v := cityNS.String
+			rec.City = &v
+		}
+		if regionNS.Valid {
+			v := regionNS.String
+			rec.Region = &v
+		}
+		if nearest.Valid {
+			v := nearest.Float64
+			rec.NearestCollegeDistanceKm = &v
+		}
+		if len(featuresJSON) > 0 {
+			var m map[string]POIFeature
+			if err := json.Unmarshal(featuresJSON, &m); err != nil {
+				return nil, fmt.Errorf("unmarshal recommendation features: %w", err)
+			}
+			rec.Features = m
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("recommend rows: %w", err)
+	}
+
+	return out, nil
 }
