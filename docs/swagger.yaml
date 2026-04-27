@@ -182,10 +182,11 @@ definitions:
         type: integer
       impressions_served:
         type: integer
-      play_weight:
-        type: integer
       name:
         type: string
+      play_weight:
+        minimum: 0
+        type: integer
       selected_days:
         items:
           type: string
@@ -303,6 +304,13 @@ definitions:
     required:
     - email
     type: object
+  models.GoogleAuthRequest:
+    properties:
+      id_token:
+        type: string
+    required:
+    - id_token
+    type: object
   models.LoginRequest:
     properties:
       identifier:
@@ -329,18 +337,9 @@ definitions:
         type: string
       phone_number:
         type: string
-      roles:
-        items:
-          $ref: '#/definitions/models.LoginRole'
-        type: array
+      role:
+        type: string
       user_name:
-        type: string
-    type: object
-  models.LoginRole:
-    properties:
-      advertiser_id:
-        type: string
-      name:
         type: string
     type: object
   models.Owner:
@@ -514,14 +513,12 @@ definitions:
     required:
     - permission_ids
     type: object
-  models.SetUserRolesRequest:
+  models.SetUserRoleRequest:
     properties:
-      roles:
-        items:
-          $ref: '#/definitions/models.UserRoleAssignment'
-        type: array
+      role_id:
+        type: string
     required:
-    - roles
+    - role_id
     type: object
   models.UpdateAdvertiserRequest:
     properties:
@@ -565,11 +562,12 @@ definitions:
         type: array
       impression_count:
         type: integer
-      play_weight:
-        type: integer
       name:
         minLength: 1
         type: string
+      play_weight:
+        minimum: 0
+        type: integer
       selected_days:
         items:
           type: string
@@ -611,6 +609,8 @@ definitions:
         type: string
       phone_number:
         type: string
+      status:
+        type: string
       user_name:
         type: string
     type: object
@@ -628,21 +628,14 @@ definitions:
         type: string
       phone_number:
         type: string
-      roles:
-        items:
-          type: string
-        type: array
+      role:
+        type: string
+      status:
+        type: string
       user_name:
         type: string
     required:
     - email
-    type: object
-  models.UserRoleAssignment:
-    properties:
-      role_id:
-        type: string
-    required:
-    - role_id
     type: object
   models.Venue:
     properties:
@@ -702,6 +695,77 @@ info:
   title: SCM Ads API
   version: 1.0.0
 paths:
+  /adposters/_all_docs:
+    get:
+      description: Returns CouchDB-style _all_docs response with all active and scheduled
+        ad_posters. Supports include_docs and region filter.
+      parameters:
+      - description: Include full document in response
+        in: query
+        name: include_docs
+        type: boolean
+      - description: Limit number of results
+        in: query
+        name: limit
+        type: integer
+      - description: Skip number of results
+        in: query
+        name: skip
+        type: integer
+      - description: Filter by region (e.g., au, jct)
+        in: query
+        name: region
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: CouchDB-style response with total_rows, offset, and rows array
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get all ad_posters metadata
+      tags:
+      - Legacy
+  /adposters/{id}:
+    get:
+      description: Returns a single ad_poster document with _id and _rev fields in
+        CouchDB/Sync Gateway style
+      parameters:
+      - description: Ad Poster ID (external_id)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ad Poster document with _id, _rev, and all ad_poster fields
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Ad Poster not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get ad_poster by ID
+      tags:
+      - Legacy
   /api/v1/advertisers/:
     get:
       produces:
@@ -945,6 +1009,42 @@ paths:
       summary: Forgot password
       tags:
       - Account
+  /api/v1/auth/google:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Google auth request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.GoogleAuthRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login with Google
+      tags:
+      - Account
   /api/v1/auth/login:
     post:
       consumes:
@@ -1015,11 +1115,6 @@ paths:
       - Account
   /api/v1/campaigns/:
     get:
-      parameters:
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
       produces:
       - application/json
       responses:
@@ -1047,10 +1142,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
       - description: Create campaign request
         in: body
         name: body
@@ -1087,10 +1178,6 @@ paths:
         name: id
         required: true
         type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
       produces:
       - application/json
       responses:
@@ -1106,11 +1193,6 @@ paths:
             type: object
         "404":
           description: Not Found
-          schema:
-            additionalProperties: true
-            type: object
-        "409":
-          description: Conflict
           schema:
             additionalProperties: true
             type: object
@@ -1130,10 +1212,6 @@ paths:
         in: path
         name: id
         required: true
-        type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
         type: string
       produces:
       - application/json
@@ -1170,10 +1248,6 @@ paths:
         in: path
         name: id
         required: true
-        type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
         type: string
       - description: Update campaign request
         in: body
@@ -1252,10 +1326,6 @@ paths:
         name: advertiserID
         required: true
         type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
       produces:
       - application/json
       responses:
@@ -1321,37 +1391,6 @@ paths:
       summary: Search campaigns
       tags:
       - Campaigns
-  /api/v1/creatives/:
-    get:
-      parameters:
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/models.Creative'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List creatives
-      tags:
-      - Creatives
   /api/v1/creatives/{id}/:
     delete:
       parameters:
@@ -1359,10 +1398,6 @@ paths:
         in: path
         name: id
         required: true
-        type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
         type: string
       produces:
       - application/json
@@ -1392,52 +1427,10 @@ paths:
       summary: Delete creative
       tags:
       - Creatives
-    get:
-      parameters:
-      - description: Creative ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.Creative'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Get creative
-      tags:
-      - Creatives
     put:
       consumes:
       - application/json
       parameters:
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
       - description: Creative ID
         in: path
         name: id
@@ -1476,117 +1469,6 @@ paths:
       summary: Update creative
       tags:
       - Creatives
-  /api/v1/creatives/campaign/{campaignID}:
-    get:
-      parameters:
-      - description: Campaign ID
-        in: path
-        name: campaignID
-        required: true
-        type: string
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/models.Creative'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List creatives by campaign
-      tags:
-      - Creatives
-  /api/v1/creatives/device/{device}:
-    get:
-      parameters:
-      - description: Device name
-        in: path
-        name: device
-        required: true
-        type: string
-      - description: Filter by current day and time
-        in: query
-        name: active_now
-        type: boolean
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/models.Creative'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      summary: List creatives by device
-      tags:
-      - Creatives
-  /api/v1/creatives/search:
-    get:
-      parameters:
-      - description: Search text (matches name, type, selected days, time slots, devices)
-        in: query
-        name: query
-        required: true
-        type: string
-      - default: 1
-        description: Page number
-        in: query
-        name: page
-        type: integer
-      - default: 20
-        description: Page size
-        in: query
-        name: page_size
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Search creatives
-      tags:
-      - Creatives
   /api/v1/creatives/suggestions:
     post:
       consumes:
@@ -1597,6 +1479,11 @@ paths:
         name: files
         required: true
         type: file
+      - description: Optional description/context provided by the user to improve
+          suggestions
+        in: formData
+        name: description
+        type: string
       - default: 5
         description: Maximum venues to return per file
         in: formData
@@ -1629,10 +1516,6 @@ paths:
       consumes:
       - multipart/form-data
       parameters:
-      - description: Active advertiser scope (required for advertiser-scoped users)
-        in: header
-        name: X-Advertiser-Id
-        type: string
       - description: Campaign ID
         in: formData
         name: campaign_id
@@ -1678,7 +1561,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Upload creatives
+      summary: Upload creative
       tags:
       - Creatives
   /api/v1/devices:
@@ -1870,6 +1753,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Query devices with filters and selectable fields
+      tags:
+      - Devices
+  /api/v1/devices/recommendations:
+    get:
+      parameters:
+      - description: City filter (device_config.city)
+        in: query
+        name: city
+        required: true
+        type: string
+      - description: Region code filter (region.code)
+        in: query
+        name: region
+        required: true
+        type: string
+      - default: 50
+        description: Maximum results to return
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Recommend devices for youth-focused restaurant campaigns
       tags:
       - Devices
   /api/v1/devices/search:
@@ -2639,7 +2563,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: List user role assignments
+      summary: Get user role
       tags:
       - UserRoles
     put:
@@ -2651,12 +2575,12 @@ paths:
         name: id
         required: true
         type: string
-      - description: Set user roles request
+      - description: Set user role request
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.SetUserRolesRequest'
+          $ref: '#/definitions/models.SetUserRoleRequest'
       produces:
       - application/json
       responses:
@@ -2677,7 +2601,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Replace user role assignments
+      summary: Replace user role
       tags:
       - UserRoles
   /api/v1/venues:
@@ -3054,6 +2978,312 @@ paths:
       summary: Search venues
       tags:
       - Venues
+  /loop_posters/{id}:
+    get:
+      description: Returns a single loop_poster document with _id and _rev fields
+        in CouchDB/Sync Gateway style
+      parameters:
+      - description: Loop Poster ID (loopPosterId)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Loop Poster document with _id, _rev, and all loop_poster fields
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Loop Poster not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get loop_poster by ID
+      tags:
+      - Legacy
+  /posters/_all_docs:
+    get:
+      description: Returns CouchDB-style _all_docs response with all active and scheduled
+        posters. Supports include_docs and region filter.
+      parameters:
+      - description: Include full document in response
+        in: query
+        name: include_docs
+        type: boolean
+      - description: Limit number of results
+        in: query
+        name: limit
+        type: integer
+      - description: Skip number of results
+        in: query
+        name: skip
+        type: integer
+      - description: Filter by region (e.g., au, jct)
+        in: query
+        name: region
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: CouchDB-style response with total_rows, offset, and rows array
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get all posters metadata
+      tags:
+      - Legacy
+  /posters/{id}:
+    get:
+      description: Returns a single poster document with _id and _rev fields in CouchDB/Sync
+        Gateway style
+      parameters:
+      - description: Poster ID (mongo_id)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Poster document with _id, _rev, and all poster fields
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Poster not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get poster by ID
+      tags:
+      - Legacy
+  /scm-api/getContent:
+    get:
+      description: Returns all active posters and ad_posters with revision support.
+        Returns no_changes if client revision matches.
+      parameters:
+      - description: City code (e.g., jc)
+        in: query
+        name: city
+        required: true
+        type: string
+      - description: Region code (e.g., jct)
+        in: query
+        name: region
+        required: true
+        type: string
+      - description: Client revision for conditional fetch
+        in: query
+        name: rev
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Content data with status, rev, posters array, and ad_posters
+            array
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Missing city or region parameter
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get posters and ad_posters by city and region
+      tags:
+      - Legacy
+  /scm-api/getLoopPostersWeb:
+    get:
+      description: Returns resolved loop poster objects with revision support. Returns
+        no_changes if client revision matches.
+      parameters:
+      - description: City code (e.g., jc)
+        in: query
+        name: city
+        required: true
+        type: string
+      - description: Device identifier
+        in: query
+        name: device
+        required: true
+        type: string
+      - description: Client revision for conditional fetch
+        in: query
+        name: rev
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Loop data with status, rev, and loop_poster array
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Missing city or device parameter
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get loop posters for a device
+      tags:
+      - Legacy
+  /scm-api/theme:
+    get:
+      description: Returns theme data with revision support for conditional fetching.
+        Returns no_changes if client revision matches.
+      parameters:
+      - description: Theme identifier (e.g., jc_jct_kiosk_6.0)
+        in: query
+        name: theme_id
+        required: true
+        type: string
+      - description: Client revision for conditional fetch
+        in: query
+        name: rev
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Theme data with status, rev, and theme array
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Missing theme_id parameter
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Theme not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get theme configuration
+      tags:
+      - Legacy
+  /theme/{device}:
+    get:
+      description: Returns loop document with _id, _rev, and cards array in CouchDB/Sync
+        Gateway style. Supports conditional fetching via If-None-Match header with
+        ETag.
+      parameters:
+      - description: Device hostname or identifier (e.g., U696843)
+        in: path
+        name: device
+        required: true
+        type: string
+      - description: ETag from previous response for conditional fetch
+        in: header
+        name: If-None-Match
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Loop document with _id, _rev, cards, city, device_code, device_type,
+            loopPosterId, region
+          schema:
+            additionalProperties: true
+            type: object
+        "304":
+          description: Not Modified - content unchanged since last fetch
+        "404":
+          description: Loop not found for device
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get loop configuration by device
+      tags:
+      - Legacy
+  /themes/{id}:
+    get:
+      description: Returns a single theme document with _id and _rev fields in CouchDB/Sync
+        Gateway style
+      parameters:
+      - description: Theme ID (e.g., jc_jct_kiosk_6.0)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Theme document with _id, _rev, and all theme fields
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Theme not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get theme by ID
+      tags:
+      - Legacy
 securityDefinitions:
   BearerAuth:
     description: 'Enter JWT token with ''Bearer '' prefix. Example: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'

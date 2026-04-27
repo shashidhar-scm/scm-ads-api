@@ -3,7 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +17,16 @@ import (
 	"scm/internal/models"
 	"scm/internal/repository"
 )
+
+// generateRevisionID creates a revision ID from data bytes
+// Format: 1-{first 8 chars of SHA256 hash}
+// Similar to CouchDB/Sync Gateway revision IDs
+func generateRevisionID(data []byte) string {
+	hash := sha256.Sum256(data)
+	hashStr := hex.EncodeToString(hash[:])
+	// Use first 8 characters of hash for brevity
+	return "1-" + hashStr[:8]
+}
 
 func normalizeLegacyDateString(s string) string {
 	s = strings.TrimSpace(s)
@@ -118,14 +130,28 @@ func NewLegacyHandler(db *sql.DB, replicaDB *sql.DB) *LegacyHandler {
 	return &LegacyHandler{db: db, replicaDB: replicaDB, creative: creativeRepo}
 }
 
-// GetTheme handles /scm-api/theme?theme_id=...
+// GetTheme handles /scm-api/theme?theme_id=...&rev=...
+// @Summary Get theme configuration
+// @Description Returns theme data with revision support for conditional fetching. Returns no_changes if client revision matches.
+// @Tags Legacy
+// @Produce json
+// @Param theme_id query string true "Theme identifier (e.g., jc_jct_kiosk_6.0)"
+// @Param rev query string false "Client revision for conditional fetch"
+// @Success 200 {object} map[string]interface{} "Theme data with status, rev, and theme array"
+// @Failure 400 {object} map[string]string "Missing theme_id parameter"
+// @Failure 404 {object} map[string]string "Theme not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /scm-api/theme [get]
 func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 	if h.replicaDB == nil {
 		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
 		return
 	}
 
-	themeID := strings.TrimSpace(r.URL.Query().Get("theme_id"))
+	q := r.URL.Query()
+	themeID := strings.TrimSpace(q.Get("theme_id"))
+	clientRev := strings.TrimSpace(q.Get("rev"))
+
 	if themeID == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "theme_id is required")
 		return
@@ -140,6 +166,21 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query theme")
+		return
+	}
+
+	// Generate revision from theme data
+	currentRev := generateRevisionID(dataVal)
+
+	// Check if client has current version
+	if clientRev != "" && clientRev == currentRev {
+		resp := map[string]any{
+			"status": "no_changes",
+			"rev":    currentRev,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 
@@ -160,8 +201,10 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 
 	// The legacy response is an object with a 'theme' key containing an array with the single theme object.
 	// The theme object itself is the 'data' JSONB from the DB.
-	resp := map[string][]json.RawMessage{
-		"theme": {themeData},
+	resp := map[string]any{
+		"status": "ok",
+		"rev":    currentRev,
+		"theme":  []json.RawMessage{themeData},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -395,7 +438,18 @@ func patchLegacyAdPosterWithCreative(raw []byte, placeholderID string, c *models
 	return b, true
 }
 
-// GetContent handles /scm-api/getContent?city=...&region=...
+// GetContent handles /scm-api/getContent?city=...&region=...&rev=...
+// @Summary Get posters and ad_posters by city and region
+// @Description Returns all active posters and ad_posters with revision support. Returns no_changes if client revision matches.
+// @Tags Legacy
+// @Produce json
+// @Param city query string true "City code (e.g., jc)"
+// @Param region query string true "Region code (e.g., jct)"
+// @Param rev query string false "Client revision for conditional fetch"
+// @Success 200 {object} map[string]interface{} "Content data with status, rev, posters array, and ad_posters array"
+// @Failure 400 {object} map[string]string "Missing city or region parameter"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /scm-api/getContent [get]
 func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 	if h.replicaDB == nil {
 		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
@@ -405,6 +459,7 @@ func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	city := strings.TrimSpace(q.Get("city"))
 	region := strings.TrimSpace(q.Get("region"))
+	clientRev := strings.TrimSpace(q.Get("rev"))
 
 	if city == "" || region == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_params", "city and region are required")
@@ -534,7 +589,29 @@ func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate revision from combined content (posters + ad_posters)
+	combinedData := map[string]any{
+		"posters":    posters,
+		"ad_posters": adPosters,
+	}
+	combinedBytes, _ := json.Marshal(combinedData)
+	currentRev := generateRevisionID(combinedBytes)
+
+	// Check if client has current version
+	if clientRev != "" && clientRev == currentRev {
+		resp := map[string]any{
+			"status": "no_changes",
+			"rev":    currentRev,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	resp := map[string]any{
+		"status":     "ok",
+		"rev":        currentRev,
 		"posters":    posters,
 		"ad_posters": adPosters,
 	}
@@ -544,7 +621,595 @@ func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// GetLoopPostersWeb handles /scm-api/getLoopPostersWeb?city=...&device=...
+// GetPosterByID handles /posters/{id} - Get individual poster by ID
+// @Summary Get poster by ID
+// @Description Returns a single poster document with _id and _rev fields in CouchDB/Sync Gateway style
+// @Tags Legacy
+// @Produce json
+// @Param id path string true "Poster ID (mongo_id)"
+// @Success 200 {object} map[string]interface{} "Poster document with _id, _rev, and all poster fields"
+// @Failure 404 {object} map[string]string "Poster not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /posters/{id} [get]
+func (h *LegacyHandler) GetPosterByID(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	// Extract ID from URL path
+	posterID := strings.TrimPrefix(r.URL.Path, "/posters/")
+	posterID = strings.TrimSpace(posterID)
+
+	if posterID == "" || posterID == "_all_docs" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "poster ID is required")
+		return
+	}
+
+	// Query poster by mongo_id
+	query := `SELECT data FROM citypost.posters WHERE mongo_id = $1 LIMIT 1`
+	
+	var dataBytes []byte
+	if err := h.replicaDB.QueryRowContext(r.Context(), query, posterID).Scan(&dataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "poster not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query poster")
+		return
+	}
+
+	// Generate revision from data
+	rev := generateRevisionID(dataBytes)
+
+	// Parse and add CouchDB-style fields
+	var doc map[string]interface{}
+	if err := json.Unmarshal(dataBytes, &doc); err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse poster data")
+		return
+	}
+
+	doc["_id"] = posterID
+	doc["_rev"] = rev
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
+// GetAllPosters handles /posters/_all_docs - CouchDB-style listing of all posters
+// @Summary Get all posters metadata
+// @Description Returns CouchDB-style _all_docs response with all active and scheduled posters. Supports include_docs and region filter.
+// @Tags Legacy
+// @Produce json
+// @Param include_docs query boolean false "Include full document in response"
+// @Param limit query integer false "Limit number of results"
+// @Param skip query integer false "Skip number of results"
+// @Param region query string false "Filter by region (e.g., au, jct)"
+// @Success 200 {object} map[string]interface{} "CouchDB-style response with total_rows, offset, and rows array"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /posters/_all_docs [get]
+func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	q := r.URL.Query()
+	includeDocs := q.Get("include_docs") == "true"
+	region := strings.TrimSpace(q.Get("region"))
+	limit := 1000 // Default limit
+	skip := 0
+
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if skipStr := q.Get("skip"); skipStr != "" {
+		if s, err := strconv.Atoi(skipStr); err == nil && s >= 0 {
+			skip = s
+		}
+	}
+
+	// Build query with optional region filter
+	var query string
+	var args []interface{}
+	
+	if region != "" {
+		query = `SELECT mongo_id, data
+			FROM citypost.posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+				AND lower(btrim(COALESCE(NULLIF(region, ''), NULLIF(data->>'region', ''), NULLIF(data->>'region_name', '')))) = lower(btrim($1))
+			ORDER BY mongo_id
+			LIMIT $2 OFFSET $3`
+		args = []interface{}{region, limit, skip}
+	} else {
+		query = `SELECT mongo_id, data
+			FROM citypost.posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+			ORDER BY mongo_id
+			LIMIT $1 OFFSET $2`
+		args = []interface{}{limit, skip}
+	}
+
+	rows, err := h.replicaDB.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query posters")
+		return
+	}
+	defer rows.Close()
+
+	// Get total count with same filter
+	var totalRows int
+	var countQuery string
+	var countArgs []interface{}
+	
+	if region != "" {
+		countQuery = `SELECT COUNT(*) FROM citypost.posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+				AND lower(btrim(COALESCE(NULLIF(region, ''), NULLIF(data->>'region', ''), NULLIF(data->>'region_name', '')))) = lower(btrim($1))`
+		countArgs = []interface{}{region}
+	} else {
+		countQuery = `SELECT COUNT(*) FROM citypost.posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')`
+		countArgs = []interface{}{}
+	}
+	
+	if err := h.replicaDB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&totalRows); err != nil {
+		totalRows = 0
+	}
+
+	type Row struct {
+		ID    string                 `json:"id"`
+		Key   string                 `json:"key"`
+		Value map[string]string      `json:"value"`
+		Doc   map[string]interface{} `json:"doc,omitempty"`
+	}
+
+	result := []Row{}
+	for rows.Next() {
+		var mongoID string
+		var dataBytes []byte
+		if err := rows.Scan(&mongoID, &dataBytes); err != nil {
+			continue
+		}
+
+		// Generate revision from data
+		rev := generateRevisionID(dataBytes)
+
+		row := Row{
+			ID:  mongoID,
+			Key: mongoID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs {
+			var doc map[string]interface{}
+			if err := json.Unmarshal(dataBytes, &doc); err == nil {
+				doc["_id"] = mongoID
+				doc["_rev"] = rev
+				row.Doc = doc
+			}
+		}
+
+		result = append(result, row)
+	}
+
+	resp := map[string]interface{}{
+		"rows":       result,
+		"total_rows": totalRows,
+		"update_seq": totalRows,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetAdPosterByID handles /adposters/{id} - Get individual ad_poster by ID
+// @Summary Get ad_poster by ID
+// @Description Returns a single ad_poster document with _id and _rev fields in CouchDB/Sync Gateway style
+// @Tags Legacy
+// @Produce json
+// @Param id path string true "Ad Poster ID (external_id)"
+// @Success 200 {object} map[string]interface{} "Ad Poster document with _id, _rev, and all ad_poster fields"
+// @Failure 404 {object} map[string]string "Ad Poster not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /adposters/{id} [get]
+func (h *LegacyHandler) GetAdPosterByID(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	// Extract ID from URL path
+	adPosterID := strings.TrimPrefix(r.URL.Path, "/adposters/")
+	adPosterID = strings.TrimSpace(adPosterID)
+
+	if adPosterID == "" || adPosterID == "_all_docs" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "ad_poster ID is required")
+		return
+	}
+
+	// Query ad_poster by external_id
+	query := `SELECT data FROM citypost.ad_posters WHERE external_id = $1 LIMIT 1`
+	
+	var dataBytes []byte
+	if err := h.replicaDB.QueryRowContext(r.Context(), query, adPosterID).Scan(&dataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "ad_poster not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query ad_poster")
+		return
+	}
+
+	// Generate revision from data
+	rev := generateRevisionID(dataBytes)
+
+	// Parse and add CouchDB-style fields
+	var doc map[string]interface{}
+	if err := json.Unmarshal(dataBytes, &doc); err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse ad_poster data")
+		return
+	}
+
+	doc["_id"] = adPosterID
+	doc["_rev"] = rev
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
+// GetThemeByID handles /themes/{id} - Get individual theme by ID
+// @Summary Get theme by ID
+// @Description Returns a single theme document with _id and _rev fields in CouchDB/Sync Gateway style
+// @Tags Legacy
+// @Produce json
+// @Param id path string true "Theme ID (e.g., jc_jct_kiosk_6.0)"
+// @Success 200 {object} map[string]interface{} "Theme document with _id, _rev, and all theme fields"
+// @Failure 404 {object} map[string]string "Theme not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /themes/{id} [get]
+func (h *LegacyHandler) GetThemeByID(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	// Extract ID from URL path
+	themeID := strings.TrimPrefix(r.URL.Path, "/themes/")
+	themeID = strings.TrimSpace(themeID)
+
+	if themeID == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "theme ID is required")
+		return
+	}
+
+	// Query theme by theme_id from JSONB data
+	query := `SELECT data FROM citypost.theme WHERE data->>'theme_id' = $1 LIMIT 1`
+	
+	var dataBytes []byte
+	if err := h.replicaDB.QueryRowContext(r.Context(), query, themeID).Scan(&dataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "theme not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query theme")
+		return
+	}
+
+	// Generate revision from data
+	rev := generateRevisionID(dataBytes)
+
+	// Parse and add CouchDB-style fields
+	var doc map[string]interface{}
+	if err := json.Unmarshal(dataBytes, &doc); err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse theme data")
+		return
+	}
+
+	doc["_id"] = themeID
+	doc["_rev"] = rev
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
+// GetLoopPosterByID handles /loop_posters/{id} - Get individual loop_poster by ID
+// @Summary Get loop_poster by ID
+// @Description Returns a single loop_poster document with _id and _rev fields in CouchDB/Sync Gateway style
+// @Tags Legacy
+// @Produce json
+// @Param id path string true "Loop Poster ID (loopPosterId)"
+// @Success 200 {object} map[string]interface{} "Loop Poster document with _id, _rev, and all loop_poster fields"
+// @Failure 404 {object} map[string]string "Loop Poster not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /loop_posters/{id} [get]
+func (h *LegacyHandler) GetLoopPosterByID(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	// Extract ID from URL path
+	loopPosterID := strings.TrimPrefix(r.URL.Path, "/loop_posters/")
+	loopPosterID = strings.TrimSpace(loopPosterID)
+
+	if loopPosterID == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "loop_poster ID is required")
+		return
+	}
+
+	// Query loop_poster by loopPosterId or device_code
+	query := `SELECT data FROM citypost.loop_posters 
+		WHERE (status IS NULL OR btrim(status) = '' OR upper(btrim(status)) = 'ACTIVE')
+			AND (lower(btrim(data->>'loopPosterId')) = lower($1) 
+				OR lower(btrim(data->>'device_code')) = lower($1))
+		LIMIT 1`
+	
+	var dataBytes []byte
+	if err := h.replicaDB.QueryRowContext(r.Context(), query, loopPosterID).Scan(&dataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "loop_poster not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query loop_poster")
+		return
+	}
+
+	// Generate revision from data
+	rev := generateRevisionID(dataBytes)
+
+	// Parse and add CouchDB-style fields
+	var doc map[string]interface{}
+	if err := json.Unmarshal(dataBytes, &doc); err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse loop_poster data")
+		return
+	}
+
+	doc["_id"] = loopPosterID
+	doc["_rev"] = rev
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
+// GetAllAdPosters handles /adposters/_all_docs - CouchDB-style listing of all ad_posters
+// @Summary Get all ad_posters metadata
+// @Description Returns CouchDB-style _all_docs response with all active and scheduled ad_posters. Supports include_docs and region filter.
+// @Tags Legacy
+// @Produce json
+// @Param include_docs query boolean false "Include full document in response"
+// @Param limit query integer false "Limit number of results"
+// @Param skip query integer false "Skip number of results"
+// @Param region query string false "Filter by region (e.g., au, jct)"
+// @Success 200 {object} map[string]interface{} "CouchDB-style response with total_rows, offset, and rows array"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /adposters/_all_docs [get]
+func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	q := r.URL.Query()
+	includeDocs := q.Get("include_docs") == "true"
+	region := strings.TrimSpace(q.Get("region"))
+	limit := 1000 // Default limit
+	skip := 0
+
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if skipStr := q.Get("skip"); skipStr != "" {
+		if s, err := strconv.Atoi(skipStr); err == nil && s >= 0 {
+			skip = s
+		}
+	}
+
+	// Build query with optional region filter
+	var query string
+	var args []interface{}
+	
+	if region != "" {
+		query = `SELECT external_id, data
+			FROM citypost.ad_posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', '')))) = lower(btrim($1))
+			ORDER BY external_id
+			LIMIT $2 OFFSET $3`
+		args = []interface{}{region, limit, skip}
+	} else {
+		query = `SELECT external_id, data
+			FROM citypost.ad_posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+			ORDER BY external_id
+			LIMIT $1 OFFSET $2`
+		args = []interface{}{limit, skip}
+	}
+
+	rows, err := h.replicaDB.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query ad_posters")
+		return
+	}
+	defer rows.Close()
+
+	// Get total count with same filter
+	var totalRows int
+	var countQuery string
+	var countArgs []interface{}
+	
+	if region != "" {
+		countQuery = `SELECT COUNT(*) FROM citypost.ad_posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', '')))) = lower(btrim($1))`
+		countArgs = []interface{}{region}
+	} else {
+		countQuery = `SELECT COUNT(*) FROM citypost.ad_posters
+			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')`
+		countArgs = []interface{}{}
+	}
+	
+	if err := h.replicaDB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&totalRows); err != nil {
+		totalRows = 0
+	}
+
+	type Row struct {
+		ID    string                 `json:"id"`
+		Key   string                 `json:"key"`
+		Value map[string]string      `json:"value"`
+		Doc   map[string]interface{} `json:"doc,omitempty"`
+	}
+
+	result := []Row{}
+	for rows.Next() {
+		var externalID string
+		var dataBytes []byte
+		if err := rows.Scan(&externalID, &dataBytes); err != nil {
+			continue
+		}
+
+		// Generate revision from data
+		rev := generateRevisionID(dataBytes)
+
+		row := Row{
+			ID:  externalID,
+			Key: externalID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs {
+			var doc map[string]interface{}
+			if err := json.Unmarshal(dataBytes, &doc); err == nil {
+				doc["_id"] = externalID
+				doc["_rev"] = rev
+				row.Doc = doc
+			}
+		}
+
+		result = append(result, row)
+	}
+
+	resp := map[string]interface{}{
+		"rows":       result,
+		"total_rows": totalRows,
+		"update_seq": totalRows,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetLoopByDevice handles /theme/{device} - RESTful endpoint for loop data
+// @Summary Get loop configuration by device
+// @Description Returns loop document with _id, _rev, and cards array in CouchDB/Sync Gateway style. Supports conditional fetching via If-None-Match header with ETag.
+// @Tags Legacy
+// @Produce json
+// @Param device path string true "Device hostname or identifier (e.g., U696843)"
+// @Param If-None-Match header string false "ETag from previous response for conditional fetch"
+// @Success 200 {object} map[string]interface{} "Loop document with _id, _rev, cards, city, device_code, device_type, loopPosterId, region"
+// @Success 304 "Not Modified - content unchanged since last fetch"
+// @Failure 404 {object} map[string]string "Loop not found for device"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /theme/{device} [get]
+func (h *LegacyHandler) GetLoopByDevice(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	// Extract device from URL path (e.g., /theme/U696843)
+	device := strings.TrimPrefix(r.URL.Path, "/theme/")
+	device = strings.TrimSpace(device)
+
+	if device == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "device is required")
+		return
+	}
+
+	// Query loop_posters table to find matching device
+	loopQuery := `SELECT data
+		FROM citypost.loop_posters
+		WHERE (status IS NULL OR btrim(status) = '' OR upper(btrim(status)) = 'ACTIVE')
+			AND (
+				lower(btrim(data->>'loopPosterId')) = lower($1)
+				OR lower(btrim(data->>'device_code')) = lower($1)
+				OR lower(btrim(data->>'device_type')) = lower($1)
+				OR lower(btrim(data->>'kiosksId')) = lower($1)
+				OR (
+					jsonb_typeof(data->'kiosksId') = 'array'
+					AND EXISTS (
+						SELECT 1
+						FROM jsonb_array_elements_text(data->'kiosksId') AS k(v)
+						WHERE lower(btrim(k.v)) = lower($1)
+					)
+				)
+			)
+		LIMIT 1`
+
+	var loopDataBytes []byte
+	if err := h.replicaDB.QueryRowContext(r.Context(), loopQuery, device).Scan(&loopDataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "loop not found for device")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query loop_posters")
+		return
+	}
+
+	// Generate revision from loop data
+	currentRev := generateRevisionID(loopDataBytes)
+
+	// Check If-None-Match header for conditional fetch
+	ifNoneMatch := r.Header.Get("If-None-Match")
+	if ifNoneMatch != "" && ifNoneMatch == currentRev {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	// Parse loop data and add _id and _rev fields
+	var loopDoc map[string]any
+	if err := json.Unmarshal(loopDataBytes, &loopDoc); err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse loop data")
+		return
+	}
+
+	// Add CouchDB-style fields
+	loopDoc["_id"] = device
+	loopDoc["_rev"] = currentRev
+
+	// Set ETag header for caching
+	w.Header().Set("ETag", currentRev)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(loopDoc)
+}
+
+// GetLoopPostersWeb handles /scm-api/getLoopPostersWeb?city=...&device=...&rev=...
+// @Summary Get loop posters for a device
+// @Description Returns resolved loop poster objects with revision support. Returns no_changes if client revision matches.
+// @Tags Legacy
+// @Produce json
+// @Param city query string true "City code (e.g., jc)"
+// @Param device query string true "Device identifier"
+// @Param rev query string false "Client revision for conditional fetch"
+// @Success 200 {object} map[string]interface{} "Loop data with status, rev, and loop_poster array"
+// @Failure 400 {object} map[string]string "Missing city or device parameter"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /scm-api/getLoopPostersWeb [get]
 func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request) {
 	if h.replicaDB == nil {
 		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
@@ -554,6 +1219,7 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 	q := r.URL.Query()
 	city := strings.TrimSpace(q.Get("city"))
 	device := strings.TrimSpace(q.Get("device"))
+	clientRev := strings.TrimSpace(q.Get("rev"))
 
 	if city == "" || device == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_params", "city and device are required")
@@ -581,7 +1247,6 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 					)
 				)
 			)
-		ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
 		LIMIT 1`
 
 	var loopDataBytes []byte
@@ -594,6 +1259,22 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 			return
 		}
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query loop_posters")
+		return
+	}
+
+	// Generate revision ID from loop data hash (similar to CouchDB/Sync Gateway)
+	// Format: {generation}-{hash} where hash is first 8 chars of SHA256
+	currentRev := generateRevisionID(loopDataBytes)
+
+	// If client provided rev and it matches current rev, return no_changes response
+	if clientRev != "" && clientRev == currentRev {
+		resp := map[string]any{
+			"status": "no_changes",
+			"rev":    currentRev,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 
@@ -715,7 +1396,11 @@ func (h *LegacyHandler) GetLoopPostersWeb(w http.ResponseWriter, r *http.Request
 		resolved = append(resolved, json.RawMessage(norm))
 	}
 
-	resp := map[string][]json.RawMessage{"loop_poster": resolved}
+	resp := map[string]any{
+		"status":      "ok",
+		"rev":         currentRev,
+		"loop_poster": resolved,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

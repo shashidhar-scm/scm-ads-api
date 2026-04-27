@@ -15,6 +15,110 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/adposters/_all_docs": {
+            "get": {
+                "description": "Returns CouchDB-style _all_docs response with all active and scheduled ad_posters. Supports include_docs and region filter.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get all ad_posters metadata",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Include full document in response",
+                        "name": "include_docs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Limit number of results",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Skip number of results",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by region (e.g., au, jct)",
+                        "name": "region",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CouchDB-style response with total_rows, offset, and rows array",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/adposters/{id}": {
+            "get": {
+                "description": "Returns a single ad_poster document with _id and _rev fields in CouchDB/Sync Gateway style",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get ad_poster by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ad Poster ID (external_id)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ad Poster document with _id, _rev, and all ad_poster fields",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Ad Poster not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/advertisers/": {
             "get": {
                 "security": [
@@ -387,6 +491,60 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/google": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Login with Google",
+                "parameters": [
+                    {
+                        "description": "Google auth request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.GoogleAuthRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.LoginResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/login": {
             "post": {
                 "consumes": [
@@ -503,14 +661,6 @@ const docTemplate = `{
                     "Campaigns"
                 ],
                 "summary": "List campaigns",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -552,12 +702,6 @@ const docTemplate = `{
                 ],
                 "summary": "Create campaign",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    },
                     {
                         "description": "Create campaign request",
                         "name": "body",
@@ -613,12 +757,6 @@ const docTemplate = `{
                         "name": "advertiserID",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -729,12 +867,6 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -790,12 +922,6 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
                     },
                     {
                         "description": "Update campaign request",
@@ -857,12 +983,6 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -882,13 +1002,6 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -959,224 +1072,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/creatives/": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Creatives"
-                ],
-                "summary": "List creatives",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.Creative"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/creatives/campaign/{campaignID}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Creatives"
-                ],
-                "summary": "List creatives by campaign",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Campaign ID",
-                        "name": "campaignID",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.Creative"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/creatives/device/{device}": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Creatives"
-                ],
-                "summary": "List creatives by device",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Device name",
-                        "name": "device",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Filter by current day and time",
-                        "name": "active_now",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.Creative"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/creatives/search": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Creatives"
-                ],
-                "summary": "Search creatives",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Search text (matches name, type, selected days, time slots, devices)",
-                        "name": "query",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "default": 1,
-                        "description": "Page number",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "default": 20,
-                        "description": "Page size",
-                        "name": "page_size",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/creatives/suggestions": {
             "post": {
                 "security": [
@@ -1201,6 +1096,12 @@ const docTemplate = `{
                         "name": "files",
                         "in": "formData",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Optional description/context provided by the user to improve suggestions",
+                        "name": "description",
+                        "in": "formData"
                     },
                     {
                         "type": "integer",
@@ -1250,14 +1151,8 @@ const docTemplate = `{
                 "tags": [
                     "Creatives"
                 ],
-                "summary": "Upload creatives",
+                "summary": "Upload creative",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    },
                     {
                         "type": "string",
                         "description": "Campaign ID",
@@ -1321,64 +1216,6 @@ const docTemplate = `{
             }
         },
         "/api/v1/creatives/{id}/": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Creatives"
-                ],
-                "summary": "Get creative",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Creative ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.Creative"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
             "put": {
                 "security": [
                     {
@@ -1396,12 +1233,6 @@ const docTemplate = `{
                 ],
                 "summary": "Update creative",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
-                    },
                     {
                         "type": "string",
                         "description": "Creative ID",
@@ -1469,12 +1300,6 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Active advertiser scope (required for advertiser-scoped users)",
-                        "name": "X-Advertiser-Id",
-                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -1660,6 +1485,68 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/handlers.DeviceQueryRequest"
                         }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/devices/recommendations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Devices"
+                ],
+                "summary": "Recommend devices for youth-focused restaurant campaigns",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "City filter (device_config.city)",
+                        "name": "city",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Region code filter (region.code)",
+                        "name": "region",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Maximum results to return",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2951,7 +2838,7 @@ const docTemplate = `{
                 "tags": [
                     "UserRoles"
                 ],
-                "summary": "List user role assignments",
+                "summary": "Get user role",
                 "parameters": [
                     {
                         "type": "string",
@@ -3000,7 +2887,7 @@ const docTemplate = `{
                 "tags": [
                     "UserRoles"
                 ],
-                "summary": "Replace user role assignments",
+                "summary": "Replace user role",
                 "parameters": [
                     {
                         "type": "string",
@@ -3010,12 +2897,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Set user roles request",
+                        "description": "Set user role request",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.SetUserRolesRequest"
+                            "$ref": "#/definitions/models.SetUserRoleRequest"
                         }
                     }
                 ],
@@ -3612,6 +3499,448 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/loop_posters/{id}": {
+            "get": {
+                "description": "Returns a single loop_poster document with _id and _rev fields in CouchDB/Sync Gateway style",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get loop_poster by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Loop Poster ID (loopPosterId)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Loop Poster document with _id, _rev, and all loop_poster fields",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Loop Poster not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/posters/_all_docs": {
+            "get": {
+                "description": "Returns CouchDB-style _all_docs response with all active and scheduled posters. Supports include_docs and region filter.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get all posters metadata",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Include full document in response",
+                        "name": "include_docs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Limit number of results",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Skip number of results",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by region (e.g., au, jct)",
+                        "name": "region",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CouchDB-style response with total_rows, offset, and rows array",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/posters/{id}": {
+            "get": {
+                "description": "Returns a single poster document with _id and _rev fields in CouchDB/Sync Gateway style",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get poster by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Poster ID (mongo_id)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Poster document with _id, _rev, and all poster fields",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Poster not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/scm-api/getContent": {
+            "get": {
+                "description": "Returns all active posters and ad_posters with revision support. Returns no_changes if client revision matches.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get posters and ad_posters by city and region",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "City code (e.g., jc)",
+                        "name": "city",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Region code (e.g., jct)",
+                        "name": "region",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client revision for conditional fetch",
+                        "name": "rev",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Content data with status, rev, posters array, and ad_posters array",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Missing city or region parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/scm-api/getLoopPostersWeb": {
+            "get": {
+                "description": "Returns resolved loop poster objects with revision support. Returns no_changes if client revision matches.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get loop posters for a device",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "City code (e.g., jc)",
+                        "name": "city",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Device identifier",
+                        "name": "device",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client revision for conditional fetch",
+                        "name": "rev",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Loop data with status, rev, and loop_poster array",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Missing city or device parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/scm-api/theme": {
+            "get": {
+                "description": "Returns theme data with revision support for conditional fetching. Returns no_changes if client revision matches.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get theme configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Theme identifier (e.g., jc_jct_kiosk_6.0)",
+                        "name": "theme_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client revision for conditional fetch",
+                        "name": "rev",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Theme data with status, rev, and theme array",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Missing theme_id parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Theme not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/theme/{device}": {
+            "get": {
+                "description": "Returns loop document with _id, _rev, and cards array in CouchDB/Sync Gateway style. Supports conditional fetching via If-None-Match header with ETag.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get loop configuration by device",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Device hostname or identifier (e.g., U696843)",
+                        "name": "device",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ETag from previous response for conditional fetch",
+                        "name": "If-None-Match",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Loop document with _id, _rev, cards, city, device_code, device_type, loopPosterId, region",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified - content unchanged since last fetch"
+                    },
+                    "404": {
+                        "description": "Loop not found for device",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/themes/{id}": {
+            "get": {
+                "description": "Returns a single theme document with _id and _rev fields in CouchDB/Sync Gateway style",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Legacy"
+                ],
+                "summary": "Get theme by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Theme ID (e.g., jc_jct_kiosk_6.0)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Theme document with _id, _rev, and all theme fields",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Theme not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -3891,7 +4220,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "play_weight": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "selected_days": {
                     "type": "array",
@@ -4065,6 +4395,17 @@ const docTemplate = `{
                 }
             }
         },
+        "models.GoogleAuthRequest": {
+            "type": "object",
+            "required": [
+                "id_token"
+            ],
+            "properties": {
+                "id_token": {
+                    "type": "string"
+                }
+            }
+        },
         "models.LoginRequest": {
             "type": "object",
             "required": [
@@ -4104,24 +4445,10 @@ const docTemplate = `{
                 "phone_number": {
                     "type": "string"
                 },
-                "roles": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.LoginRole"
-                    }
+                "role": {
+                    "type": "string"
                 },
                 "user_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.LoginRole": {
-            "type": "object",
-            "properties": {
-                "advertiser_id": {
-                    "type": "string"
-                },
-                "name": {
                     "type": "string"
                 }
             }
@@ -4135,6 +4462,23 @@ const docTemplate = `{
             }
         },
         "models.Permission": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.Project": {
             "type": "object",
             "properties": {
                 "ad_poster_frequency": {
@@ -4367,17 +4711,14 @@ const docTemplate = `{
                 }
             }
         },
-        "models.SetUserRolesRequest": {
+        "models.SetUserRoleRequest": {
             "type": "object",
             "required": [
-                "roles"
+                "role_id"
             ],
             "properties": {
-                "roles": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.UserRoleAssignment"
-                    }
+                "role_id": {
+                    "type": "string"
                 }
             }
         },
@@ -4447,7 +4788,8 @@ const docTemplate = `{
                     "minLength": 1
                 },
                 "play_weight": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "selected_days": {
                     "type": "array",
@@ -4514,6 +4856,9 @@ const docTemplate = `{
                 "phone_number": {
                     "type": "string"
                 },
+                "status": {
+                    "type": "string"
+                },
                 "user_name": {
                     "type": "string"
                 }
@@ -4543,24 +4888,13 @@ const docTemplate = `{
                 "phone_number": {
                     "type": "string"
                 },
-                "roles": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "role": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 },
                 "user_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.UserRoleAssignment": {
-            "type": "object",
-            "required": [
-                "role_id"
-            ],
-            "properties": {
-                "role_id": {
                     "type": "string"
                 }
             }
