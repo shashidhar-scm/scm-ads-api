@@ -3837,6 +3837,110 @@ const docTemplate = `{
                 }
             }
         },
+        "/sync/adposters": {
+            "post": {
+                "description": "Copies all ACTIVE and SCHEDULED ad_posters from source region to target region, updating location-specific fields",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sync"
+                ],
+                "summary": "Sync ad_posters between regions",
+                "parameters": [
+                    {
+                        "description": "Source and target region specifications",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RegionSyncRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sync completed with statistics",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RegionSyncResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/sync/posters": {
+            "post": {
+                "description": "Copies all ACTIVE and SCHEDULED posters from source region to target region, updating location-specific fields",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sync"
+                ],
+                "summary": "Sync posters between regions",
+                "parameters": [
+                    {
+                        "description": "Source and target region specifications",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RegionSyncRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sync completed with statistics",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RegionSyncResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/theme/{device}": {
             "get": {
                 "description": "Returns loop document with _id, _rev, and cards array in CouchDB/Sync Gateway style. Supports conditional fetching via If-None-Match header with ETag.",
@@ -3980,6 +4084,68 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "page_size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.RegionSpec": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.RegionSyncRequest": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "$ref": "#/definitions/handlers.RegionSpec"
+                },
+                "target": {
+                    "$ref": "#/definitions/handlers.RegionSpec"
+                }
+            }
+        },
+        "handlers.RegionSyncResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "stats": {
+                    "$ref": "#/definitions/handlers.RegionSyncStats"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handlers.RegionSyncStats": {
+            "type": "object",
+            "properties": {
+                "adposters_copied": {
+                    "type": "integer"
+                },
+                "adposters_processed": {
+                    "type": "integer"
+                },
+                "adposters_updated": {
+                    "type": "integer"
+                },
+                "posters_copied": {
+                    "type": "integer"
+                },
+                "posters_processed": {
+                    "type": "integer"
+                },
+                "posters_updated": {
                     "type": "integer"
                 }
             }
