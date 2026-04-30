@@ -73,7 +73,7 @@ const docTemplate = `{
         },
         "/adposters/{id}": {
             "get": {
-                "description": "Returns a single ad_poster document with _id and _rev fields in CouchDB/Sync Gateway style",
+                "description": "Returns a single ad_poster document with _id and _rev fields in CouchDB/Sync Gateway style. Searches by external_id or adPosterId field.",
                 "produces": [
                     "application/json"
                 ],
@@ -84,7 +84,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Ad Poster ID (external_id)",
+                        "description": "Ad Poster ID (external_id or adPosterId)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -3606,7 +3606,7 @@ const docTemplate = `{
         },
         "/posters/{id}": {
             "get": {
-                "description": "Returns a single poster document with _id and _rev fields in CouchDB/Sync Gateway style",
+                "description": "Returns a single poster document with _id and _rev fields in CouchDB/Sync Gateway style. Searches by mongo_id, poster_id (UUID), or posterId field.",
                 "produces": [
                     "application/json"
                 ],
@@ -3617,7 +3617,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Poster ID (mongo_id)",
+                        "description": "Poster ID (mongo_id, poster_id UUID, or posterId)",
                         "name": "id",
                         "in": "path",
                         "required": true

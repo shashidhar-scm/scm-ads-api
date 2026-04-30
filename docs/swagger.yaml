@@ -776,9 +776,9 @@ paths:
   /adposters/{id}:
     get:
       description: Returns a single ad_poster document with _id and _rev fields in
-        CouchDB/Sync Gateway style
+        CouchDB/Sync Gateway style. Searches by external_id or adPosterId field.
       parameters:
-      - description: Ad Poster ID (external_id)
+      - description: Ad Poster ID (external_id or adPosterId)
         in: path
         name: id
         required: true
@@ -3092,9 +3092,9 @@ paths:
   /posters/{id}:
     get:
       description: Returns a single poster document with _id and _rev fields in CouchDB/Sync
-        Gateway style
+        Gateway style. Searches by mongo_id, poster_id (UUID), or posterId field.
       parameters:
-      - description: Poster ID (mongo_id)
+      - description: Poster ID (mongo_id, poster_id UUID, or posterId)
         in: path
         name: id
         required: true

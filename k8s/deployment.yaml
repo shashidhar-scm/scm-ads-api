@@ -58,7 +58,7 @@ spec:
     spec:
       containers:
       - name: scm-ads-api
-        image: smartcitymedia/scm-ads-api:0.0.73
+        image: smartcitymedia/scm-ads-api:0.0.93
         envFrom:
           - configMapRef:
               name: scm-ads-api

@@ -623,10 +623,10 @@ func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 
 // GetPosterByID handles /posters/{id} - Get individual poster by ID
 // @Summary Get poster by ID
-// @Description Returns a single poster document with _id and _rev fields in CouchDB/Sync Gateway style
+// @Description Returns a single poster document with _id and _rev fields in CouchDB/Sync Gateway style. Searches by mongo_id, poster_id (UUID), or posterId field.
 // @Tags Legacy
 // @Produce json
-// @Param id path string true "Poster ID (mongo_id)"
+// @Param id path string true "Poster ID (mongo_id, poster_id UUID, or posterId)"
 // @Success 200 {object} map[string]interface{} "Poster document with _id, _rev, and all poster fields"
 // @Failure 404 {object} map[string]string "Poster not found"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -646,8 +646,12 @@ func (h *LegacyHandler) GetPosterByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query poster by mongo_id
-	query := `SELECT data FROM citypost.posters WHERE mongo_id = $1 LIMIT 1`
+	// Query poster by mongo_id, poster_id (UUID), or posterId field in JSONB
+	query := `SELECT data FROM citypost.posters 
+		WHERE mongo_id = $1 
+		   OR poster_id::text = $1 
+		   OR data->>'posterId' = $1 
+		LIMIT 1`
 	
 	var dataBytes []byte
 	if err := h.replicaDB.QueryRowContext(r.Context(), query, posterID).Scan(&dataBytes); err != nil {
@@ -811,10 +815,10 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 
 // GetAdPosterByID handles /adposters/{id} - Get individual ad_poster by ID
 // @Summary Get ad_poster by ID
-// @Description Returns a single ad_poster document with _id and _rev fields in CouchDB/Sync Gateway style
+// @Description Returns a single ad_poster document with _id and _rev fields in CouchDB/Sync Gateway style. Searches by external_id or adPosterId field.
 // @Tags Legacy
 // @Produce json
-// @Param id path string true "Ad Poster ID (external_id)"
+// @Param id path string true "Ad Poster ID (external_id or adPosterId)"
 // @Success 200 {object} map[string]interface{} "Ad Poster document with _id, _rev, and all ad_poster fields"
 // @Failure 404 {object} map[string]string "Ad Poster not found"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -834,8 +838,11 @@ func (h *LegacyHandler) GetAdPosterByID(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Query ad_poster by external_id
-	query := `SELECT data FROM citypost.ad_posters WHERE external_id = $1 LIMIT 1`
+	// Query ad_poster by external_id or adPosterId field in JSONB
+	query := `SELECT data FROM citypost.ad_posters 
+		WHERE external_id = $1 
+		   OR data->>'adPosterId' = $1 
+		LIMIT 1`
 	
 	var dataBytes []byte
 	if err := h.replicaDB.QueryRowContext(r.Context(), query, adPosterID).Scan(&dataBytes); err != nil {
