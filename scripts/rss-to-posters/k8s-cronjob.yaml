@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rss-to-posters-chicago
+  namespace: backend
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours (at :00 minutes)
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid  # Don't run multiple instances simultaneously
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: rss-to-posters
+            feed: chicago-eater
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: rss-converter
+            image: smartcitymedia/rss-to-posters:latest
+            imagePullPolicy: Always
+            env:
+            - name: RSS_FEED_URL
+              value: "https://chicago.eater.com/rss/index.xml"
+            - name: MONGO_URI
+              value: "mongodb://admin:asterisk@prod-mongodb-svc.db.svc.cluster.local:27017/admin?replicaSet=prod-mongodb&authSource=admin"
+            - name: MONGO_DB
+              value: "cg"
+            - name: TARGET_CITY
+              value: "cg"
+            - name: TARGET_REGION
+              value: "cg"
+            - name: POSTER_LIFESPAN_DAYS
+              value: "7"
+            - name: MAX_ARTICLES
+              value: "10"
+          imagePullSecrets:
+          - name: scm-registrypullsecret

@@ -1,0 +1,20 @@
+{
+  "name": "rss-to-posters",
+  "version": "1.0.0",
+  "description": "Convert RSS feeds to MongoDB poster documents",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js --dry-run"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.3.5",
+    "cheerio": "1.0.0-rc.10",
+    "mongodb": "^6.3.0",
+    "uuid": "^9.0.1",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {},
+  "author": "",
+  "license": "MIT"
+}
