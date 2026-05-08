@@ -26,7 +26,10 @@ func TestAPIv1EndpointsAreWired(t *testing.T) {
 	}
 	defer db.Close()
 
-	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	if err != nil {
+		t.Fatalf("SetupRoutes: %v", err)
+	}
 
 	defaultNotFoundBody := "404 page not found\n"
 

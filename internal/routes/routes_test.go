@@ -27,7 +27,10 @@ func TestRootReturnsJSON(t *testing.T) {
 	}
 	defer db.Close()
 
-	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	if err != nil {
+		t.Fatalf("SetupRoutes: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -58,7 +61,10 @@ func TestHealthDBOK(t *testing.T) {
 
 	mock.ExpectPing()
 
-	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	if err != nil {
+		t.Fatalf("SetupRoutes: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -88,7 +94,10 @@ func TestHealthDBDown(t *testing.T) {
 
 	mock.ExpectPing().WillReturnError(sql.ErrConnDone)
 
-	r := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	if err != nil {
+		t.Fatalf("SetupRoutes: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

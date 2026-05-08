@@ -1,6 +1,5 @@
 package handlers
 
-
 import (
 	"context"
 	"database/sql"
@@ -35,21 +34,19 @@ import (
 	"scm/internal/repository"
 )
 
-
-
 type CreativeHandler struct {
-    repo      repository.CreativeRepository
-    campaignRepo interfaces.CampaignRepository
-    s3Client  *s3.Client
+	repo              repository.CreativeRepository
+	campaignRepo      interfaces.CampaignRepository
+	s3Client          *s3.Client
 	rekognitionClient *rekognition.Client
-    validator *validator.Validate
-    bucket    string
-    publicBaseURL string
-	db        *sql.DB
+	validator         *validator.Validate
+	bucket            string
+	publicBaseURL     string
+	db                *sql.DB
 
-	suggestVenuesWorkers   int
-	rekognitionTimeout     time.Duration
-	enableLabelFallback    bool
+	suggestVenuesWorkers int
+	rekognitionTimeout   time.Duration
+	enableLabelFallback  bool
 
 	venuesCacheMu      sync.Mutex
 	venuesCacheFetched time.Time
@@ -57,25 +54,28 @@ type CreativeHandler struct {
 	venuesCache        []*models.Venue
 }
 
-
-func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config, db *sql.DB, cfg *config.Config) *CreativeHandler {
+func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config, db *sql.DB, cfg *config.Config) (*CreativeHandler, error) {
 	if cfg == nil {
-		cfg = config.Load()
+		loadedCfg, err := config.Load()
+		if err != nil {
+			return nil, err
+		}
+		cfg = loadedCfg
 	}
 
-    return &CreativeHandler{
-        repo:      repo,
-        campaignRepo: campaignRepo,
-        s3Client:  s3Config.Client,
-        bucket:    s3Config.Bucket,
-        publicBaseURL: s3Config.PublicBaseURL,
-        validator: validator.New(),
-		db:        db,
+	return &CreativeHandler{
+		repo:                 repo,
+		campaignRepo:         campaignRepo,
+		s3Client:             s3Config.Client,
+		bucket:               s3Config.Bucket,
+		publicBaseURL:        s3Config.PublicBaseURL,
+		validator:            validator.New(),
+		db:                   db,
 		suggestVenuesWorkers: cfg.SuggestVenuesWorkers,
 		rekognitionTimeout:   time.Duration(cfg.RekognitionTimeoutMs) * time.Millisecond,
 		enableLabelFallback:  cfg.EnableRekognitionLabelFallback,
 		venuesCacheTTL:       time.Duration(cfg.VenuesCacheTTLSeconds) * time.Second,
-    }
+	}, nil
 }
 
 func (h *CreativeHandler) getVenuesCached(ctx context.Context) ([]*models.Venue, error) {
@@ -734,11 +734,11 @@ func scoreVenues(venues []*models.Venue, extractedText string, topK int) ([]mode
 		// Normalize score into 0..1-ish for UI
 		norm := score / (score + 3)
 		scoredList = append(scoredList, scored{s: models.VenueSuggestion{
-			VenueID:             v.ID,
-			Name:                v.Name,
+			VenueID:              v.ID,
+			Name:                 v.Name,
 			MatchedSubCategories: matchedSubs,
-			Score:               norm,
-			Reasons:             reasons,
+			Score:                norm,
+			Reasons:              reasons,
 		}})
 	}
 
@@ -1061,27 +1061,27 @@ func (h *CreativeHandler) SuggestVenues(w http.ResponseWriter, r *http.Request) 
 
 // generateUUID generates a new UUID
 func generateUUID() string {
-    return uuid.New().String()
+	return uuid.New().String()
 }
 
 func parseFormList(r *http.Request, key string) []string {
-    if r.MultipartForm == nil {
-        return []string{}
-    }
+	if r.MultipartForm == nil {
+		return []string{}
+	}
 
-    var out = []string{}
-    if vs := r.MultipartForm.Value[key]; len(vs) > 0 {
-        for _, v := range vs {
-            for _, part := range strings.Split(v, ",") {
-                part = strings.TrimSpace(part)
-                if part == "" {
-                    continue
-                }
-                out = append(out, part)
-            }
-        }
-    }
-    return out
+	var out = []string{}
+	if vs := r.MultipartForm.Value[key]; len(vs) > 0 {
+		for _, v := range vs {
+			for _, part := range strings.Split(v, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				out = append(out, part)
+			}
+		}
+	}
+	return out
 }
 
 // UploadCreative handles multiple file uploads to S3
@@ -1100,177 +1100,177 @@ func parseFormList(r *http.Request, key string) []string {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/creatives/upload [post]
 func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request) {
-    // 1. Parse the multipart form
-    const maxMemory = 32 << 20 // 32MB max memory
-    if err := r.ParseMultipartForm(maxMemory); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
-        return
-    }
+	// 1. Parse the multipart form
+	const maxMemory = 32 << 20 // 32MB max memory
+	if err := r.ParseMultipartForm(maxMemory); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
+		return
+	}
 
-    campaignID := r.FormValue("campaign_id")
-    if campaignID == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id is required")
-        return
-    }
+	campaignID := r.FormValue("campaign_id")
+	if campaignID == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id is required")
+		return
+	}
 
-    if _, err := uuid.Parse(campaignID); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id must be a valid UUID")
-        return
-    }
+	if _, err := uuid.Parse(campaignID); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id must be a valid UUID")
+		return
+	}
 
-    if h.campaignRepo == nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "campaign repository not configured")
-        return
-    }
+	if h.campaignRepo == nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "campaign repository not configured")
+		return
+	}
 
-    callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
-    isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
-    if err != nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
-        return
-    }
-    if !isGlobalAdmin {
-        ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
-        if err != nil {
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
-            return
-        }
-        if !ok {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
-            return
-        }
-    }
+	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
+	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
+		return
+	}
+	if !isGlobalAdmin {
+		ok, err := h.ensureCampaignOwnedByCaller(r.Context(), campaignID, callerID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
+			return
+		}
+		if !ok {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
+			return
+		}
+	}
 
-    campaign, err := h.campaignRepo.GetByID(r.Context(), campaignID)
-    if err != nil {
-        if err == sql.ErrNoRows {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
-            return
-        }
-        log.Printf("Failed to validate campaign %s: %v", campaignID, err)
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
-        return
-    }
+	campaign, err := h.campaignRepo.GetByID(r.Context(), campaignID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "campaign_id not found")
+			return
+		}
+		log.Printf("Failed to validate campaign %s: %v", campaignID, err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "server_error", "Failed to validate campaign")
+		return
+	}
 
-    var impressionCount *int64
-    if campaign != nil && campaign.ImpressionsBased {
-        raw := strings.TrimSpace(r.FormValue("impression_count"))
-        if raw == "" {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count is required for impressions-based campaigns")
-            return
-        }
-        v, err := strconv.ParseInt(raw, 10, 64)
-        if err != nil || v <= 0 {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count must be a positive integer")
-            return
-        }
-        impressionCount = &v
-    }
+	var impressionCount *int64
+	if campaign != nil && campaign.ImpressionsBased {
+		raw := strings.TrimSpace(r.FormValue("impression_count"))
+		if raw == "" {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count is required for impressions-based campaigns")
+			return
+		}
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v <= 0 {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count must be a positive integer")
+			return
+		}
+		impressionCount = &v
+	}
 
-    playWeight := 100
-    if raw := strings.TrimSpace(r.FormValue("play_weight")); raw != "" {
-        v, err := strconv.Atoi(raw)
-        if err != nil || v < 0 {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "play_weight must be a non-negative integer")
-            return
-        }
-        playWeight = v
-    }
+	playWeight := 100
+	if raw := strings.TrimSpace(r.FormValue("play_weight")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "play_weight must be a non-negative integer")
+			return
+		}
+		playWeight = v
+	}
 
-    selectedDays := parseFormList(r, "selected_days")
-    if len(selectedDays) == 0 {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "selected_days is required")
-        return
-    }
+	selectedDays := parseFormList(r, "selected_days")
+	if len(selectedDays) == 0 {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "selected_days is required")
+		return
+	}
 
-    timeSlots := parseFormList(r, "time_slots")
-    if len(timeSlots) == 0 {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "time_slots is required")
-        return
-    }
+	timeSlots := parseFormList(r, "time_slots")
+	if len(timeSlots) == 0 {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "time_slots is required")
+		return
+	}
 
-    devices := parseFormList(r, "devices")
+	devices := parseFormList(r, "devices")
 
-    // 2. Get the files from the form
-    files := r.MultipartForm.File["files"]
-    if len(files) == 0 {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "No files uploaded")
-        return
-    }
+	// 2. Get the files from the form
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "No files uploaded")
+		return
+	}
 
-    var uploadedCreatives []*models.Creative
-    var errors []string
-    uploader := manager.NewUploader(h.s3Client)
+	var uploadedCreatives []*models.Creative
+	var errors []string
+	uploader := manager.NewUploader(h.s3Client)
 
-    // 5. Process each file
-    for _, fileHeader := range files {
-        // Open the file
-        file, err := fileHeader.Open()
-        if err != nil {
-            log.Printf("Failed to open file %s: %v", fileHeader.Filename, err)
-            continue
-        }
+	// 5. Process each file
+	for _, fileHeader := range files {
+		// Open the file
+		file, err := fileHeader.Open()
+		if err != nil {
+			log.Printf("Failed to open file %s: %v", fileHeader.Filename, err)
+			continue
+		}
 
-        // Create a new creative
-        creative := &models.Creative{
-            ID:           generateUUID(),
-            Name:         fileHeader.Filename,
-            Type:         getFileType(fileHeader),
-            Size:         fileHeader.Size,
-            ImpressionCount: impressionCount,
-            PlayWeight:   playWeight,
-            CampaignID:   campaignID,
-            SelectedDays: selectedDays,
-            TimeSlots:    timeSlots,
-            Devices:      devices,
-            UploadedAt:   time.Now().UTC(),
-        }
+		// Create a new creative
+		creative := &models.Creative{
+			ID:              generateUUID(),
+			Name:            fileHeader.Filename,
+			Type:            getFileType(fileHeader),
+			Size:            fileHeader.Size,
+			ImpressionCount: impressionCount,
+			PlayWeight:      playWeight,
+			CampaignID:      campaignID,
+			SelectedDays:    selectedDays,
+			TimeSlots:       timeSlots,
+			Devices:         devices,
+			UploadedAt:      time.Now().UTC(),
+		}
 
-        // Upload to S3
-        key := filepath.Join("creatives", creative.ID+filepath.Ext(fileHeader.Filename))
-        
-        _, err = uploader.Upload(r.Context(), &s3.PutObjectInput{
-            Bucket: aws.String(h.bucket),
-            Key:    aws.String(key),
-            Body:   file,
-        })
-        file.Close() // Close the file when done
+		// Upload to S3
+		key := filepath.Join("creatives", creative.ID+filepath.Ext(fileHeader.Filename))
 
-        if err != nil {
-            errors = append(errors, fmt.Sprintf("Failed to upload %s to S3: %v", fileHeader.Filename, err))
-            continue
-        }
+		_, err = uploader.Upload(r.Context(), &s3.PutObjectInput{
+			Bucket: aws.String(h.bucket),
+			Key:    aws.String(key),
+			Body:   file,
+		})
+		file.Close() // Close the file when done
 
-        // Set the URL
-        creative.URL = strings.TrimRight(h.publicBaseURL, "/") + "/" + key
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to upload %s to S3: %v", fileHeader.Filename, err))
+			continue
+		}
 
-        // Store the object key internally
-        creative.FilePath = key
+		// Set the URL
+		creative.URL = strings.TrimRight(h.publicBaseURL, "/") + "/" + key
 
-        // Save to database
-        if err := h.repo.Create(r.Context(), creative); err != nil {
-            errors = append(errors, fmt.Sprintf("Failed to save %s: %v", fileHeader.Filename, err))
-            continue
-        }
+		// Store the object key internally
+		creative.FilePath = key
 
-        uploadedCreatives = append(uploadedCreatives, creative)
-    }
+		// Save to database
+		if err := h.repo.Create(r.Context(), creative); err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to save %s: %v", fileHeader.Filename, err))
+			continue
+		}
 
-    // 6. Return the uploaded creatives
-    if len(uploadedCreatives) == 0 {
-        if len(errors) > 0 {
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", strings.Join(errors, "; "))
-        } else {
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", "Failed to upload any files")
-        }
-        return
-    }
+		uploadedCreatives = append(uploadedCreatives, creative)
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusCreated)
-    if err := json.NewEncoder(w).Encode(uploadedCreatives); err != nil {
-        log.Printf("Error encoding response: %v", err)
-    }
+	// 6. Return the uploaded creatives
+	if len(uploadedCreatives) == 0 {
+		if len(errors) > 0 {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", strings.Join(errors, "; "))
+		} else {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "upload_failed", "Failed to upload any files")
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(uploadedCreatives); err != nil {
+		log.Printf("Error encoding response: %v", err)
+	}
 }
 
 // UpdateCreative handles PUT /creatives/{id}
@@ -1287,11 +1287,11 @@ func (h *CreativeHandler) UploadCreative(w http.ResponseWriter, r *http.Request)
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/creatives/{id}/ [put]
 func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
-        return
-    }
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
+		return
+	}
 
 	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
 	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
@@ -1311,166 +1311,167 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-    if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-        const maxMemory = 32 << 20
-        if err := r.ParseMultipartForm(maxMemory); err != nil {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
-            return
-        }
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		const maxMemory = 32 << 20
+		if err := r.ParseMultipartForm(maxMemory); err != nil {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to parse form")
+			return
+		}
 
-        var req models.UpdateCreativeRequest
+		var req models.UpdateCreativeRequest
 
-        if name := r.FormValue("name"); name != "" {
-            req.Name = &name
-        }
+		if name := r.FormValue("name"); name != "" {
+			req.Name = &name
+		}
 
-        if raw := strings.TrimSpace(r.FormValue("impression_count")); raw != "" {
-            if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
-                req.ImpressionCount = &v
-            } else {
-                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count must be a valid integer")
-                return
-            }
-        }
+		if raw := strings.TrimSpace(r.FormValue("impression_count")); raw != "" {
+			if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				req.ImpressionCount = &v
+			} else {
+				writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count must be a valid integer")
+				return
+			}
+		}
 
-        if raw := strings.TrimSpace(r.FormValue("play_weight")); raw != "" {
-            if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
-                req.PlayWeight = &v
-            } else {
-                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "play_weight must be a non-negative integer")
-                return
-            }
-        }
+		if raw := strings.TrimSpace(r.FormValue("play_weight")); raw != "" {
+			if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+				req.PlayWeight = &v
+			} else {
+				writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "play_weight must be a non-negative integer")
+				return
+			}
+		}
 
-        if r.MultipartForm != nil {
-            if _, ok := r.MultipartForm.Value["selected_days"]; ok {
-                v := parseFormList(r, "selected_days")
-                req.SelectedDays = &v
-            }
-            if _, ok := r.MultipartForm.Value["time_slots"]; ok {
-                v := parseFormList(r, "time_slots")
-                req.TimeSlots = &v
-            }
-            if _, ok := r.MultipartForm.Value["devices"]; ok {
-                v := parseFormList(r, "devices")
-                req.Devices = &v
-            }
-        }
+		if r.MultipartForm != nil {
+			if _, ok := r.MultipartForm.Value["selected_days"]; ok {
+				v := parseFormList(r, "selected_days")
+				req.SelectedDays = &v
+			}
+			if _, ok := r.MultipartForm.Value["time_slots"]; ok {
+				v := parseFormList(r, "time_slots")
+				req.TimeSlots = &v
+			}
+			if _, ok := r.MultipartForm.Value["devices"]; ok {
+				v := parseFormList(r, "devices")
+				req.Devices = &v
+			}
+		}
 
-        var fileHeader *multipart.FileHeader
-        if r.MultipartForm != nil {
-            if fhs := r.MultipartForm.File["file"]; len(fhs) > 0 {
-                fileHeader = fhs[0]
-            } else if fhs := r.MultipartForm.File["files"]; len(fhs) > 0 {
-                fileHeader = fhs[0]
-            }
-        }
+		var fileHeader *multipart.FileHeader
+		if r.MultipartForm != nil {
+			if fhs := r.MultipartForm.File["file"]; len(fhs) > 0 {
+				fileHeader = fhs[0]
+			} else if fhs := r.MultipartForm.File["files"]; len(fhs) > 0 {
+				fileHeader = fhs[0]
+			}
+		}
 
-        if fileHeader != nil {
-            file, err := fileHeader.Open()
-            if err != nil {
-                writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to open uploaded file")
-                return
-            }
-            defer file.Close()
+		if fileHeader != nil {
+			file, err := fileHeader.Open()
+			if err != nil {
+				writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Failed to open uploaded file")
+				return
+			}
+			defer file.Close()
 
-            key := filepath.Join("creatives", id+filepath.Ext(fileHeader.Filename))
-            uploader := manager.NewUploader(h.s3Client)
-            _, err = uploader.Upload(r.Context(), &s3.PutObjectInput{
-                Bucket: aws.String(h.bucket),
-                Key:    aws.String(key),
-                Body:   file,
-            })
-            if err != nil {
-                log.Printf("Failed to upload file %s to S3: %v", fileHeader.Filename, err)
-                writeJSONErrorResponse(w, http.StatusBadGateway, "upload_failed", "Failed to upload file")
-                return
-            }
+			key := filepath.Join("creatives", id+filepath.Ext(fileHeader.Filename))
+			uploader := manager.NewUploader(h.s3Client)
+			_, err = uploader.Upload(r.Context(), &s3.PutObjectInput{
+				Bucket: aws.String(h.bucket),
+				Key:    aws.String(key),
+				Body:   file,
+			})
+			if err != nil {
+				log.Printf("Failed to upload file %s to S3: %v", fileHeader.Filename, err)
+				writeJSONErrorResponse(w, http.StatusBadGateway, "upload_failed", "Failed to upload file")
+				return
+			}
 
-            url := strings.TrimRight(h.publicBaseURL, "/") + "/" + key
-            req.URL = &url
-            req.FilePath = &key
-            size := fileHeader.Size
-            req.Size = &size
-            t := getFileType(fileHeader)
-            req.Type = &t
+			url := strings.TrimRight(h.publicBaseURL, "/") + "/" + key
+			req.URL = &url
+			req.FilePath = &key
+			size := fileHeader.Size
+			req.Size = &size
+			t := getFileType(fileHeader)
+			req.Type = &t
 
-            if req.Name == nil {
-                n := fileHeader.Filename
-                req.Name = &n
-            }
-        }
+			if req.Name == nil {
+				n := fileHeader.Filename
+				req.Name = &n
+			}
+		}
 
-        if err := h.validator.Struct(req); err != nil {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
-            return
-        }
+		if err := h.validator.Struct(req); err != nil {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
 
-        if err := h.repo.Update(r.Context(), id, &req); err != nil {
-            if err == sql.ErrNoRows {
-                writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
-                return
-            }
-            log.Printf("Failed to update creative: %v", err)
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
-            return
-        }
+		if err := h.repo.Update(r.Context(), id, &req); err != nil {
+			if err == sql.ErrNoRows {
+				writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+				return
+			}
+			log.Printf("Failed to update creative: %v", err)
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+			return
+		}
 
-        writeJSONMessage(w, http.StatusOK, "creative updated successfully")
-        return
-    }
+		writeJSONMessage(w, http.StatusOK, "creative updated successfully")
+		return
+	}
 
-    var req models.UpdateCreativeRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
-        return
-    }
+	var req models.UpdateCreativeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
 
-    if err := h.validator.Struct(req); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
-        return
-    }
+	if err := h.validator.Struct(req); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
 
-    existing, err := h.repo.GetByID(r.Context(), id)
-    if err != nil {
-        if err == sql.ErrNoRows {
-            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
-            return
-        }
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
-        return
-    }
+	existing, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+		return
+	}
 
-    if h.campaignRepo != nil {
-        campaign, err := h.campaignRepo.GetByID(r.Context(), existing.CampaignID)
-        if err != nil {
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
-            return
-        }
-        finalImpressionCount := existing.ImpressionCount
-        if req.ImpressionCount != nil {
-            finalImpressionCount = req.ImpressionCount
-        }
-        if campaign != nil && campaign.ImpressionsBased {
-            if finalImpressionCount == nil || *finalImpressionCount <= 0 {
-                writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count is required for impressions-based campaigns")
-                return
-            }
-        }
-    }
+	if h.campaignRepo != nil {
+		campaign, err := h.campaignRepo.GetByID(r.Context(), existing.CampaignID)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+			return
+		}
+		finalImpressionCount := existing.ImpressionCount
+		if req.ImpressionCount != nil {
+			finalImpressionCount = req.ImpressionCount
+		}
+		if campaign != nil && campaign.ImpressionsBased {
+			if finalImpressionCount == nil || *finalImpressionCount <= 0 {
+				writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "impression_count is required for impressions-based campaigns")
+				return
+			}
+		}
+	}
 
-    if err := h.repo.Update(r.Context(), id, &req); err != nil {
-        if err == sql.ErrNoRows {
-            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
-            return
-        }
-        log.Printf("Failed to update creative: %v", err)
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
-        return
-    }
+	if err := h.repo.Update(r.Context(), id, &req); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
+		log.Printf("Failed to update creative: %v", err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "update_creative_failed", "Failed to update creative")
+		return
+	}
 
-    writeJSONMessage(w, http.StatusOK, "creative updated successfully")
+	writeJSONMessage(w, http.StatusOK, "creative updated successfully")
 }
+
 // DeleteCreative handles DELETE /creatives/{id}
 // @Tags Creatives
 // @Summary Delete creative
@@ -1483,11 +1484,11 @@ func (h *CreativeHandler) UpdateCreative(w http.ResponseWriter, r *http.Request)
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/creatives/{id}/ [delete]
 func (h *CreativeHandler) DeleteCreative(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
-        return
-    }
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "Creative ID is required")
+		return
+	}
 
 	callerID, _ := r.Context().Value(middleware.CtxUserID).(string)
 	isGlobalAdmin, err := h.isGlobalAdmin(r.Context(), callerID)
@@ -1507,17 +1508,17 @@ func (h *CreativeHandler) DeleteCreative(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-    if err := h.repo.Delete(r.Context(), id); err != nil {
-        if err == sql.ErrNoRows {
-            writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
-            return
-        }
-        log.Printf("Failed to delete creative: %v", err)
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_creative_failed", "Failed to delete creative")
-        return
-    }
+	if err := h.repo.Delete(r.Context(), id); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSONErrorResponse(w, http.StatusNotFound, "creative_not_found", "Creative not found")
+			return
+		}
+		log.Printf("Failed to delete creative: %v", err)
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_creative_failed", "Failed to delete creative")
+		return
+	}
 
-    writeJSONMessage(w, http.StatusOK, "creative deleted successfully")
+	writeJSONMessage(w, http.StatusOK, "creative deleted successfully")
 }
 
 func getFileType(header *multipart.FileHeader) models.CreativeType {

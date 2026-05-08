@@ -297,7 +297,10 @@ func startScheduledCampaignActivator(ctx context.Context, campaignRepo interface
 
 func main() {
 	// Load configuration
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
 
 	// Create database if it doesn't exist
 	if err := db.CreateDatabaseIfNotExists(cfg.DatabaseURL); err != nil {
@@ -354,7 +357,10 @@ func main() {
 	}
 
 	// Create router and setup routes
-	router := routes.SetupRoutes(database.DB, replicatorDB, cfg, s3Config)
+	router, err := routes.SetupRoutes(database.DB, replicatorDB, cfg, s3Config)
+	if err != nil {
+		log.Fatalf("Failed to setup routes: %v", err)
+	}
 
 	// Create server
 	server := &http.Server{

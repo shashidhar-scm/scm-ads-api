@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"mime/multipart"
-	"net/textproto"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -22,28 +22,36 @@ type rotationTestCreativeRepo struct {
 	served    map[string]map[string]int
 }
 
-func (r *rotationTestCreativeRepo) Create(ctx context.Context, creative *models.Creative) error { return nil }
+func (r *rotationTestCreativeRepo) Create(ctx context.Context, creative *models.Creative) error {
+	return nil
+}
 func (r *rotationTestCreativeRepo) GetByID(ctx context.Context, id string) (*models.Creative, error) {
 	return nil, nil
 }
 func (r *rotationTestCreativeRepo) ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error) {
 	return []*models.Creative{}, nil
 }
-func (r *rotationTestCreativeRepo) CountAll(ctx context.Context, createdByUserID *string) (int, error) { return 0, nil }
+func (r *rotationTestCreativeRepo) CountAll(ctx context.Context, createdByUserID *string) (int, error) {
+	return 0, nil
+}
 func (r *rotationTestCreativeRepo) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Creative, int, error) {
 	return []*models.Creative{}, 0, nil
 }
 func (r *rotationTestCreativeRepo) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
 	return []*models.Creative{}, nil
 }
-func (r *rotationTestCreativeRepo) CountByCampaign(ctx context.Context, campaignID string) (int, error) { return 0, nil }
+func (r *rotationTestCreativeRepo) CountByCampaign(ctx context.Context, campaignID string) (int, error) {
+	return 0, nil
+}
 func (r *rotationTestCreativeRepo) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	return r.creatives, nil
 }
 func (r *rotationTestCreativeRepo) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {
 	return len(r.creatives), nil
 }
-func (r *rotationTestCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error { return nil }
+func (r *rotationTestCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
+	return nil
+}
 func (r *rotationTestCreativeRepo) Delete(ctx context.Context, id string) error { return nil }
 func (r *rotationTestCreativeRepo) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error) {
 	if len(candidateCreativeIDs) == 0 {
@@ -107,21 +115,27 @@ func (noopCreativeRepo) GetByID(ctx context.Context, id string) (*models.Creativ
 func (noopCreativeRepo) ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error) {
 	return []*models.Creative{}, nil
 }
-func (noopCreativeRepo) CountAll(ctx context.Context, createdByUserID *string) (int, error) { return 0, nil }
+func (noopCreativeRepo) CountAll(ctx context.Context, createdByUserID *string) (int, error) {
+	return 0, nil
+}
 func (noopCreativeRepo) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Creative, int, error) {
 	return []*models.Creative{}, 0, nil
 }
 func (noopCreativeRepo) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
 	return []*models.Creative{}, nil
 }
-func (noopCreativeRepo) CountByCampaign(ctx context.Context, campaignID string) (int, error) { return 0, nil }
+func (noopCreativeRepo) CountByCampaign(ctx context.Context, campaignID string) (int, error) {
+	return 0, nil
+}
 func (noopCreativeRepo) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
 	return []*models.Creative{}, nil
 }
 func (noopCreativeRepo) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {
 	return 0, nil
 }
-func (noopCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error { return nil }
+func (noopCreativeRepo) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
+	return nil
+}
 func (noopCreativeRepo) Delete(ctx context.Context, id string) error { return nil }
 
 func (noopCreativeRepo) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error) {
@@ -134,7 +148,9 @@ func (noopCreativeRepo) PickNextRotationalCreative(ctx context.Context, device s
 type noopCampaignRepo struct{}
 
 func (noopCampaignRepo) Create(ctx context.Context, campaign *models.Campaign) error { return nil }
-func (noopCampaignRepo) GetByID(ctx context.Context, id string) (*models.Campaign, error) { return nil, nil }
+func (noopCampaignRepo) GetByID(ctx context.Context, id string) (*models.Campaign, error) {
+	return nil, nil
+}
 func (noopCampaignRepo) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
 	return nil, nil
 }
@@ -153,7 +169,9 @@ func (noopCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, startDa
 func (noopCampaignRepo) CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error) {
 	return 0, nil
 }
-func (noopCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
+func (noopCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error {
+	return nil
+}
 func (noopCampaignRepo) Delete(ctx context.Context, id string) error { return nil }
 func (noopCampaignRepo) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
 	return []*models.Campaign{}, nil
@@ -163,7 +181,10 @@ func (noopCampaignRepo) ListByEndDate(ctx context.Context, endDate time.Time) ([
 }
 
 func TestUploadCreativeMissingCampaignIDReturnsJSON(t *testing.T) {
-	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	if err != nil {
+		t.Fatalf("NewCreativeHandler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/creatives/upload", nil)
 	// No multipart => ParseMultipartForm fails => JSON error
@@ -254,7 +275,10 @@ func TestScoreVenuesRetailAndFamilyIntentBoosts(t *testing.T) {
 }
 
 func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
-	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	if err != nil {
+		t.Fatalf("NewCreativeHandler: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/creatives/suggestions", nil)
 	w := httptest.NewRecorder()
 	h.SuggestVenues(w, req)
@@ -267,7 +291,10 @@ func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
 }
 
 func TestSuggestVenuesUnsupportedContentTypeReturnsFileError(t *testing.T) {
-	h := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	if err != nil {
+		t.Fatalf("NewCreativeHandler: %v", err)
+	}
 
 	form := &multipart.Form{File: map[string][]*multipart.FileHeader{}}
 	fh := &multipart.FileHeader{Filename: "x.txt", Header: textproto.MIMEHeader{}}
@@ -290,7 +317,10 @@ func TestListCreativesByDeviceWeightedRotationPerCampaign(t *testing.T) {
 		{ID: "c1b", CampaignID: "camp1", PlayWeight: 25, UploadedAt: baseTime.Add(-1 * time.Hour)},
 		{ID: "c2a", CampaignID: "camp2", PlayWeight: 100, UploadedAt: baseTime.Add(-3 * time.Hour)},
 	}}
-	h := NewCreativeHandler(repo, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(repo, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	if err != nil {
+		t.Fatalf("NewCreativeHandler: %v", err)
+	}
 
 	withDeviceParam := func(req *http.Request, device string) *http.Request {
 		rctx := chi.NewRouteContext()

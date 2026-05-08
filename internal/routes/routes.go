@@ -20,7 +20,7 @@ import (
 	"github.com/go-chi/cors"
 )
 
-func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config *config.S3Config) *chi.Mux {
+func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config *config.S3Config) (*chi.Mux, error) {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -99,11 +99,16 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
+	var routeErr error
+
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth routes
 		RegisterAuthRoutes(r, db, cfg)
-		RegisterPublicCreativeRoutes(r, db, s3Config, cfg)
+		if err := RegisterPublicCreativeRoutes(r, db, s3Config, cfg); err != nil {
+			routeErr = err
+			return
+		}
 
 		r.Get("/debug/env", func(w http.ResponseWriter, r *http.Request) {
 			sanitizeDatabaseURL := func(raw string) string {
@@ -166,7 +171,10 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 			RegisterCampaignRoutes(r, db, cfg.PopAPIBaseURL)
 			// Register advertiser routes
 			RegisterAdvertiserRoutes(r, db)
-			RegisterCreativeRoutes(r, db, s3Config, cfg)
+			if err := RegisterCreativeRoutes(r, db, s3Config, cfg); err != nil {
+				routeErr = err
+				return
+			}
 			// Initialize CityPost console client
 			client := services.NewCityPostConsoleClient(
 				cfg.CityPostConsoleBaseURL,
@@ -184,5 +192,9 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 		})
 	})
 
-	return r
+	if routeErr != nil {
+		return nil, routeErr
+	}
+
+	return r, nil
 }

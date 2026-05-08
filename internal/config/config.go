@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -44,7 +45,7 @@ type Config struct {
 	SMTPUseTLS   bool
 }
 
-func Load() *Config {
+func Load() (*Config, error) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	replicatorDatabaseURL := strings.TrimSpace(os.Getenv("REPLICATOR_DATABASE_URL"))
 	if replicatorDatabaseURL == "" {
@@ -69,7 +70,7 @@ func Load() *Config {
 		databaseURL = u.String()
 	}
 
-	return &Config{
+	cfg := &Config{
 		Port:                   getEnv("PORT", "9000"),
 		Environment:            getEnv("ENVIRONMENT", "development"),
 		DatabaseURL:            databaseURL,
@@ -84,25 +85,73 @@ func Load() *Config {
 		RekognitionTimeoutMs:           getEnvInt("REKOGNITION_TIMEOUT_MS", 7000),
 		EnableRekognitionLabelFallback: getEnvBool("ENABLE_REKOGNITION_LABEL_FALLBACK", false),
 
-		JWTSecret:            getEnv("JWT_SECRET", "dev-secret"),
+		JWTSecret:            getEnv("JWT_SECRET", ""),
 		JWTExpiresInSeconds:  getEnvInt64("JWT_EXPIRES_IN_SECONDS", 86400),
 		AuthResetPasswordURL: getEnv("AUTH_RESET_PASSWORD_URL", "https://scm-ads.citypost.us/reset-password"),
 		DashboardBaseURL:     getEnv("DASHBOARD_BASE_URL", "https://scm-ads.citypost.us"),
 		GoogleClientID:       getEnv("GOOGLE_CLIENT_ID", ""),
 
-		CityPostConsoleBaseURL:    getEnv("CITYPOST_CONSOLE_BASE_URL", "https://consoleapi.citypost.us/scm-cloud"),
-		CityPostConsoleUsername:   getEnv("CITYPOST_CONSOLE_USERNAME", "girish@smartcitymedia.us"),
-		CityPostConsolePassword:   getEnv("CITYPOST_CONSOLE_PASSWORD", "liv3wire"),
+		CityPostConsoleBaseURL:    getEnv("CITYPOST_CONSOLE_BASE_URL", ""),
+		CityPostConsoleUsername:   getEnv("CITYPOST_CONSOLE_USERNAME", ""),
+		CityPostConsolePassword:   getEnv("CITYPOST_CONSOLE_PASSWORD", ""),
 		CityPostConsoleAuthScheme: getEnv("CITYPOST_CONSOLE_AUTH_SCHEME", "Token"),
 		PopAPIBaseURL:             getEnv("POP_API_BASE_URL", "https://pop-api.citypost.us"),
 
-		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
-		SMTPPort:     getEnv("SMTP_PORT", "587"),
-		SMTPUser:     getEnv("SMTP_USER", "citypost@smartcitymedia.us"),
-		SMTPPassword: getEnv("SMTP_PASSWORD", "iwud bnba gmpi dbct"),
-		SMTPFrom:     getEnv("SMTP_FROM", "citypost@smartcitymedia.us"),
+		SMTPHost:     getEnv("SMTP_HOST", ""),
+		SMTPPort:     getEnv("SMTP_PORT", ""),
+		SMTPUser:     getEnv("SMTP_USER", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", ""),
 		SMTPUseTLS:   getEnvBool("SMTP_USE_TLS", true),
 	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func (c *Config) validate() error {
+	missing := make([]string, 0)
+
+	if strings.TrimSpace(c.JWTSecret) == "" {
+		missing = append(missing, "JWT_SECRET")
+	}
+	if strings.TrimSpace(c.SMTPHost) == "" {
+		missing = append(missing, "SMTP_HOST")
+	}
+	if strings.TrimSpace(c.SMTPPort) == "" {
+		missing = append(missing, "SMTP_PORT")
+	}
+	if strings.TrimSpace(c.SMTPUser) == "" {
+		missing = append(missing, "SMTP_USER")
+	}
+	if strings.TrimSpace(c.SMTPPassword) == "" {
+		missing = append(missing, "SMTP_PASSWORD")
+	}
+	if strings.TrimSpace(c.SMTPFrom) == "" {
+		missing = append(missing, "SMTP_FROM")
+	}
+	if strings.TrimSpace(c.CityPostConsoleBaseURL) == "" {
+		missing = append(missing, "CITYPOST_CONSOLE_BASE_URL")
+	}
+	if strings.TrimSpace(c.CityPostConsoleUsername) == "" {
+		missing = append(missing, "CITYPOST_CONSOLE_USERNAME")
+	}
+	if strings.TrimSpace(c.CityPostConsolePassword) == "" {
+		missing = append(missing, "CITYPOST_CONSOLE_PASSWORD")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+
+	if c.Environment != "development" && c.JWTSecret == "dev-secret" {
+		return fmt.Errorf("JWT_SECRET must not use the insecure default in %s environment", c.Environment)
+	}
+
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {
