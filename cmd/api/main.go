@@ -13,7 +13,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,14 +21,16 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/lib/pq"
+	"github.com/rs/zerolog"
+
 	"scm/internal/config"
 	"scm/internal/db"
 	"scm/internal/db/migrations"
+	"scm/internal/logger"
 	"scm/internal/repository"
 	"scm/internal/routes"
 	"scm/internal/services"
-
-	_ "github.com/lib/pq"
 )
 
 func getEnv(key, defaultValue string) string {
@@ -52,7 +53,7 @@ func getEnvInt(key string, defaultValue int) int {
 	return i
 }
 
-func startPopImpressionsSync(ctx context.Context, db *sql.DB, popAPI services.PopAPI) {
+func startPopImpressionsSync(ctx context.Context, db *sql.DB, popAPI services.PopAPI, logger *zerolog.Logger) {
 	if db == nil || popAPI == nil {
 		return
 	}
@@ -65,10 +66,10 @@ func startPopImpressionsSync(ctx context.Context, db *sql.DB, popAPI services.Po
 
 	go func() {
 		runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		err := syncPopImpressionsOnce(runCtx, db, popAPI)
+		err := syncPopImpressionsOnce(runCtx, db, popAPI, logger)
 		cancel()
 		if err != nil {
-			log.Printf("POP impressions sync failed: %v", err)
+			logger.Warn().Err(err).Msg("POP impressions sync failed")
 		}
 
 		t := time.NewTicker(interval)
@@ -81,16 +82,16 @@ func startPopImpressionsSync(ctx context.Context, db *sql.DB, popAPI services.Po
 			}
 
 			runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			err := syncPopImpressionsOnce(runCtx, db, popAPI)
+			err := syncPopImpressionsOnce(runCtx, db, popAPI, logger)
 			cancel()
 			if err != nil {
-				log.Printf("POP impressions sync failed: %v", err)
+				logger.Warn().Err(err).Msg("POP impressions sync failed")
 			}
 		}
 	}()
 }
 
-func syncPopImpressionsOnce(ctx context.Context, db *sql.DB, popAPI services.PopAPI) error {
+func syncPopImpressionsOnce(ctx context.Context, db *sql.DB, popAPI services.PopAPI, logger *zerolog.Logger) error {
 	rows, err := db.QueryContext(ctx, `
         SELECT id
         FROM campaigns
@@ -114,7 +115,9 @@ func syncPopImpressionsOnce(ctx context.Context, db *sql.DB, popAPI services.Pop
 
 		imps, err := popAPI.CampaignImpressions(ctx, campaignID)
 		if err != nil {
-			log.Printf("POP impressions: campaign_id=%s err=%v", campaignID, err)
+			if logger != nil {
+				logger.Warn().Err(err).Str("campaign_id", campaignID).Msg("POP impressions fetch failed")
+			}
 			continue
 		}
 		if imps == nil {
@@ -131,7 +134,12 @@ func syncPopImpressionsOnce(ctx context.Context, db *sql.DB, popAPI services.Pop
                 SET impressions_served = GREATEST(impressions_served, $2)
                 WHERE id = $1
             `, creativeID, p.Impressions); err != nil {
-				log.Printf("POP impressions update failed: creative_id=%s campaign_id=%s err=%v", creativeID, campaignID, err)
+				if logger != nil {
+					logger.Warn().Err(err).
+						Str("creative_id", creativeID).
+						Str("campaign_id", campaignID).
+						Msg("POP impressions update failed")
+				}
 				continue
 			}
 		}
@@ -141,7 +149,7 @@ func syncPopImpressionsOnce(ctx context.Context, db *sql.DB, popAPI services.Pop
 
 func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface {
 	CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error)
-}, notifier *services.CampaignNotifier) {
+}, notifier *services.CampaignNotifier, logger *zerolog.Logger) {
 	tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
 	activeStatus := getEnv("CAMPAIGN_ACTIVE_STATUS", "active")
 	completedStatus := getEnv("CAMPAIGN_COMPLETED_STATUS", "completed")
@@ -150,7 +158,9 @@ func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface
 
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
-		log.Printf("Invalid CAMPAIGN_SCHEDULER_TZ=%q, falling back to UTC: %v", tzName, err)
+		if logger != nil {
+			logger.Warn().Err(err).Str("tz", tzName).Msg("Invalid CAMPAIGN_SCHEDULER_TZ, falling back to UTC")
+		}
 		tzName = "UTC"
 		loc = time.UTC
 	}
@@ -174,14 +184,29 @@ func startScheduledCampaignCompleter(ctx context.Context, campaignRepo interface
 			rows, err := campaignRepo.CompleteActiveEndedBefore(runCtx, now, activeStatus, completedStatus, tzName)
 			cancel()
 			if err != nil {
-				log.Printf("Failed to complete ended campaigns (active=%s completed=%s tz=%s): %v", activeStatus, completedStatus, tzName, err)
+				if logger != nil {
+					logger.Warn().Err(err).
+						Str("active_status", activeStatus).
+						Str("completed_status", completedStatus).
+						Str("tz", tzName).
+						Msg("Failed to complete ended campaigns")
+				}
 				continue
 			}
 			if rows > 0 {
-				log.Printf("Completed %d campaign(s) (active=%s completed=%s tz=%s)", rows, activeStatus, completedStatus, tzName)
+				if logger != nil {
+					logger.Info().
+						Int64("rows", rows).
+						Str("active_status", activeStatus).
+						Str("completed_status", completedStatus).
+						Str("tz", tzName).
+						Msg("Completed ended campaigns")
+				}
 				if notifier != nil {
 					if err := notifier.SendCompletionNotifications(ctx, now); err != nil {
-						log.Printf("Failed to send completion notifications: %v", err)
+						if logger != nil {
+							logger.Warn().Err(err).Msg("Failed to send completion notifications")
+						}
 					}
 				}
 			}
@@ -217,14 +242,16 @@ func nextRunAt(now time.Time, loc *time.Location, hour int, minute int) time.Tim
 	return run
 }
 
-func startCampaignNotificationDispatcher(ctx context.Context, notifier *services.CampaignNotifier) {
+func startCampaignNotificationDispatcher(ctx context.Context, notifier *services.CampaignNotifier, logger *zerolog.Logger) {
 	tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
 	hhmm := getEnv("CAMPAIGN_NOTIFICATION_TIME", "00:03")
 	hour, minute := parseHHMM(hhmm, 0, 3)
 
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
-		log.Printf("Invalid CAMPAIGN_SCHEDULER_TZ=%q, falling back to UTC: %v", tzName, err)
+		if logger != nil {
+			logger.Warn().Err(err).Str("tz", tzName).Msg("Invalid CAMPAIGN_SCHEDULER_TZ, falling back to UTC")
+		}
 		tzName = "UTC"
 		loc = time.UTC
 	}
@@ -245,7 +272,9 @@ func startCampaignNotificationDispatcher(ctx context.Context, notifier *services
 
 			runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			if err := notifier.SendActivationNotifications(runCtx); err != nil {
-				log.Printf("Failed to send campaign notifications (tz=%s): %v", tzName, err)
+				if logger != nil {
+					logger.Warn().Err(err).Str("tz", tzName).Msg("Failed to send campaign notifications")
+				}
 			}
 			cancel()
 		}
@@ -254,7 +283,7 @@ func startCampaignNotificationDispatcher(ctx context.Context, notifier *services
 
 func startScheduledCampaignActivator(ctx context.Context, campaignRepo interface {
 	ActivateScheduledStartingOn(ctx context.Context, startDate time.Time, scheduledStatus string, timeZone string) (int64, error)
-}) {
+}, logger *zerolog.Logger) {
 	tzName := getEnv("CAMPAIGN_SCHEDULER_TZ", "UTC")
 	scheduledStatus := getEnv("CAMPAIGN_SCHEDULED_STATUS", "scheduled")
 	hhmm := getEnv("CAMPAIGN_SCHEDULER_TIME", "00:01")
@@ -262,7 +291,9 @@ func startScheduledCampaignActivator(ctx context.Context, campaignRepo interface
 
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
-		log.Printf("Invalid CAMPAIGN_SCHEDULER_TZ=%q, falling back to UTC: %v", tzName, err)
+		if logger != nil {
+			logger.Warn().Err(err).Str("tz", tzName).Msg("Invalid CAMPAIGN_SCHEDULER_TZ, falling back to UTC")
+		}
 		tzName = "UTC"
 		loc = time.UTC
 	}
@@ -285,11 +316,22 @@ func startScheduledCampaignActivator(ctx context.Context, campaignRepo interface
 			rows, err := campaignRepo.ActivateScheduledStartingOn(runCtx, time.Now(), scheduledStatus, tzName)
 			cancel()
 			if err != nil {
-				log.Printf("Failed to activate scheduled campaigns (status=%s tz=%s): %v", scheduledStatus, tzName, err)
+				if logger != nil {
+					logger.Warn().Err(err).
+						Str("status", scheduledStatus).
+						Str("tz", tzName).
+						Msg("Failed to activate scheduled campaigns")
+				}
 				continue
 			}
 			if rows > 0 {
-				log.Printf("Activated %d scheduled campaign(s) for today (status=%s tz=%s)", rows, scheduledStatus, tzName)
+				if logger != nil {
+					logger.Info().
+						Int64("rows", rows).
+						Str("status", scheduledStatus).
+						Str("tz", tzName).
+						Msg("Activated scheduled campaigns")
+				}
 			}
 		}
 	}()
@@ -299,18 +341,19 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		panic(err)
 	}
+	appLogger := logger.New(cfg)
 
 	// Create database if it doesn't exist
 	if err := db.CreateDatabaseIfNotExists(cfg.DatabaseURL); err != nil {
-		log.Fatalf("Failed to ensure database exists: %v", err)
+		appLogger.Fatal().Err(err).Msg("Failed to ensure database exists")
 	}
 
 	// Initialize database
 	database, err := db.New(cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		appLogger.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 	defer database.Close()
 
@@ -318,7 +361,7 @@ func main() {
 	if strings.TrimSpace(cfg.ReplicatorDatabaseURL) != "" {
 		rdb, err := db.New(cfg.ReplicatorDatabaseURL)
 		if err != nil {
-			log.Fatalf("Failed to connect to replicator database: %v", err)
+			appLogger.Fatal().Err(err).Msg("Failed to connect to replicator database")
 		}
 		replicatorDB = rdb.DB
 		defer rdb.Close()
@@ -326,7 +369,7 @@ func main() {
 
 	// Run database migrations
 	if err := migrations.RunMigrations(database.DB); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+		appLogger.Fatal().Err(err).Msg("Failed to run migrations")
 	}
 
 	// Background jobs
@@ -343,23 +386,23 @@ func main() {
 		cfg.SMTPUseTLS,
 	)
 	notifier := services.NewCampaignNotifier(campaignRepo, userRepo, emailSender)
-	startScheduledCampaignActivator(jobsCtx, campaignRepo)
-	startScheduledCampaignCompleter(jobsCtx, campaignRepo, notifier)
-	startCampaignNotificationDispatcher(jobsCtx, notifier)
+	startScheduledCampaignActivator(jobsCtx, campaignRepo, appLogger)
+	startScheduledCampaignCompleter(jobsCtx, campaignRepo, notifier, appLogger)
+	startCampaignNotificationDispatcher(jobsCtx, notifier, appLogger)
 
 	popClient := services.NewPopClient(cfg.PopAPIBaseURL)
-	startPopImpressionsSync(jobsCtx, database.DB, popClient)
+	startPopImpressionsSync(jobsCtx, database.DB, popClient, appLogger)
 
 	// Initialize S3 configuration
 	s3Config, err := config.NewS3Config()
 	if err != nil {
-		log.Fatalf("Failed to create S3 client: %v", err)
+		appLogger.Fatal().Err(err).Msg("Failed to create S3 client")
 	}
 
 	// Create router and setup routes
 	router, err := routes.SetupRoutes(database.DB, replicatorDB, cfg, s3Config)
 	if err != nil {
-		log.Fatalf("Failed to setup routes: %v", err)
+		appLogger.Fatal().Err(err).Msg("Failed to setup routes")
 	}
 
 	// Create server
@@ -370,9 +413,9 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		log.Printf("Server starting on port %s", cfg.Port)
+		appLogger.Info().Str("port", cfg.Port).Msg("Server starting")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+			appLogger.Fatal().Err(err).Msg("Failed to start server")
 		}
 	}()
 
@@ -380,7 +423,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down server...")
+	appLogger.Info().Msg("Shutting down server...")
 
 	cancelJobs()
 
@@ -389,8 +432,8 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		appLogger.Fatal().Err(err).Msg("Server forced to shutdown")
 	}
 
-	log.Println("Server exiting")
+	appLogger.Info().Msg("Server exiting")
 }

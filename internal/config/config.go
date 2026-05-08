@@ -14,6 +14,7 @@ type Config struct {
 	Environment            string
 	DatabaseURL            string
 	ReplicatorDatabaseURL  string
+	LogLevel               string
 	AuthVerboseErrors      bool
 	AuthReturnResetToken   bool
 	AuthResetPasswordURL   string
@@ -73,6 +74,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Port:                   getEnv("PORT", "9000"),
 		Environment:            getEnv("ENVIRONMENT", "development"),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:            databaseURL,
 		ReplicatorDatabaseURL:  replicatorDatabaseURL,
 		AuthVerboseErrors:      getEnvBool("AUTH_VERBOSE_ERRORS", false),

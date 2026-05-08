@@ -7,6 +7,7 @@ This document tracks the ongoing effort to refactor the SCM Ads API into a scala
 | 2026-05-08 | Configuration Hardening | ✅ Complete | `config.Load()` now returns `(*Config, error)` with strict validation of critical env vars (JWT secret, SMTP creds, console creds). Prevents insecure defaults and surfaces misconfiguration early. |
 | 2026-05-08 | Creative Handler Wiring | ✅ Complete | `NewCreativeHandler` and creative route registration now bubble configuration errors up through `SetupRoutes` to `main`. Ensures router wiring fails fast if dependencies are missing. |
 | 2026-05-08 | Test Suite Updates | ✅ Complete | Creative handler and routes tests updated to assert the new error-returning constructors, keeping CI green and contracts enforced. |
+| 2026-05-08 | Structured Logging Foundation | ✅ Complete | Added `internal/logger` with zerolog, env-driven log levels, and rewired `cmd/api/main.go` plus schedulers/pop sync pipelines to emit structured logs. Establishes a centralized logger for future middleware/feature modules. |
 
 ## Planned Improvements
 
