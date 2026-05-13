@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"scm/internal/config"
+	"scm/internal/interfaces"
 	authmw "scm/internal/middleware"
+	"scm/internal/repository"
 	"scm/internal/services"
 
 	"github.com/go-chi/chi/v5"
@@ -20,7 +22,23 @@ import (
 	"github.com/go-chi/cors"
 )
 
-func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config *config.S3Config) (*chi.Mux, error) {
+func SetupRoutes(
+	db *sql.DB,
+	replicatorDB *sql.DB,
+	cfg *config.Config,
+	s3Config *config.S3Config,
+	campaignRepo interfaces.CampaignRepository,
+	creativeRepo repository.CreativeRepository,
+	userRepo repository.UserRepository,
+	advertiserRepo interfaces.AdvertiserRepository,
+	deviceRepo repository.DeviceRepository,
+	projectRepo repository.ProjectRepository,
+	roleRepo repository.RoleRepository,
+	permissionRepo repository.PermissionRepository,
+	userRoleRepo repository.UserRoleRepository,
+	placeExchangeRepo repository.PlaceExchangeTokenRepository,
+	legacyRevisionRepo repository.LegacyRevisionRepository,
+) (*chi.Mux, error) {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -65,7 +83,7 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 	})
 
 	RegisterSwaggerRoutes(r)
-	RegisterLegacyRoutes(r, db, replicatorDB)
+	RegisterLegacyRoutes(r, db, replicatorDB, creativeRepo, placeExchangeRepo, legacyRevisionRepo)
 	RegisterRegionSyncRoutes(r, db, replicatorDB)
 
 	// Health check
@@ -104,8 +122,8 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth routes
-		RegisterAuthRoutes(r, db, cfg)
-		if err := RegisterPublicCreativeRoutes(r, db, s3Config, cfg); err != nil {
+		RegisterAuthRoutes(r, db, cfg, userRepo, userRoleRepo)
+		if err := RegisterPublicCreativeRoutes(r, s3Config, campaignRepo, creativeRepo, cfg); err != nil {
 			routeErr = err
 			return
 		}
@@ -165,13 +183,13 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 		r.Group(func(r chi.Router) {
 			r.Use(authmw.JWTAuth(cfg.JWTSecret))
 
-			RegisterRBACRoutes(r, db)
+			RegisterRBACRoutes(r, db, roleRepo, permissionRepo, userRoleRepo)
 
 			// Register campaign routes
-			RegisterCampaignRoutes(r, db, cfg.PopAPIBaseURL)
+			RegisterCampaignRoutes(r, db, campaignRepo, cfg.PopAPIBaseURL, userRoleRepo)
 			// Register advertiser routes
-			RegisterAdvertiserRoutes(r, db)
-			if err := RegisterCreativeRoutes(r, db, s3Config, cfg); err != nil {
+			RegisterAdvertiserRoutes(r, db, advertiserRepo, userRoleRepo)
+			if err := RegisterCreativeRoutes(r, db, userRoleRepo, s3Config, campaignRepo, creativeRepo, cfg); err != nil {
 				routeErr = err
 				return
 			}
@@ -182,12 +200,12 @@ func SetupRoutes(db *sql.DB, replicatorDB *sql.DB, cfg *config.Config, s3Config 
 				cfg.CityPostConsolePassword,
 			)
 			client.SetAuthScheme(cfg.CityPostConsoleAuthScheme)
-			RegisterSyncRoutes(r, db, client)
-			RegisterProjectRoutes(r, db)
-			RegisterDeviceReadRoutes(r, db)
-			RegisterReplicatorRoutes(r, db, replicatorDB)
-			RegisterVenueRoutes(r, db)
-			RegisterUserRoutes(r, db)
+			RegisterSyncRoutes(r, db, client, projectRepo, deviceRepo)
+			RegisterProjectRoutes(r, db, userRoleRepo, projectRepo)
+			RegisterDeviceReadRoutes(r, db, userRoleRepo, deviceRepo)
+			RegisterReplicatorRoutes(r, db, userRoleRepo, replicatorDB)
+			RegisterVenueRoutes(r, db, userRoleRepo)
+			RegisterUserRoutes(r, db, userRoleRepo, userRepo)
 
 		})
 	})

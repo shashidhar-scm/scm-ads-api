@@ -17,8 +17,10 @@ type mockUserRepo struct {
 	users map[string]*models.User
 }
 
-func (m *mockUserRepo) Create(ctx context.Context, user *models.User) error                 { return nil }
-func (m *mockUserRepo) GetByEmail(ctx context.Context, email string) (*models.User, error) { return nil, nil }
+func (m *mockUserRepo) Create(ctx context.Context, user *models.User) error { return nil }
+func (m *mockUserRepo) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	return nil, nil
+}
 func (m *mockUserRepo) GetByIdentifier(ctx context.Context, identifier string) (*models.User, error) {
 	return nil, nil
 }
@@ -71,7 +73,7 @@ func (e *mockErr) Error() string { return e.s }
 
 func TestDeleteUserNotFoundReturnsJSON(t *testing.T) {
 	repo := &mockUserRepo{users: map[string]*models.User{}}
-	h := NewUserHandler(repo, nil)
+	h := NewUserHandler(repo, nil, newStubUserRoleRepo())
 
 	r := chi.NewRouter()
 	r.Delete("/users/{id}", h.DeleteUser)
@@ -94,7 +96,7 @@ func TestDeleteUserNotFoundReturnsJSON(t *testing.T) {
 
 func TestUpdateUserReturnsJSON(t *testing.T) {
 	repo := &mockUserRepo{users: map[string]*models.User{"u1": {ID: "u1", Email: "a@b.com", CreatedAt: time.Now().UTC()}}}
-	h := NewUserHandler(repo, nil)
+	h := NewUserHandler(repo, nil, newStubUserRoleRepo())
 
 	r := chi.NewRouter()
 	r.Put("/users/{id}", h.UpdateUser)

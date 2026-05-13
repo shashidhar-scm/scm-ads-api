@@ -10,16 +10,16 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterDeviceReadRoutes(r chi.Router, db *sql.DB) {
-	repo := repository.NewDeviceRepository(db)
-	handler := handlers.NewDeviceReadHandler(repo)
+func RegisterDeviceReadRoutes(r chi.Router, db *sql.DB, userRoleRepo repository.UserRoleRepository, deviceRepo repository.DeviceRepository) {
+	handler := handlers.NewDeviceReadHandler(deviceRepo)
 
 	r.Route("/devices", func(r chi.Router) {
-		r.With(authmw.RequirePermission(db, "devices.read")).Get("/recommendations", handler.Recommend)
-		r.With(authmw.RequirePermission(db, "devices.read")).Post("/query", handler.Query)
-		r.With(authmw.RequirePermission(db, "devices.read")).Get("/search", handler.Search)
-		r.With(authmw.RequirePermission(db, "devices.read")).Get("/counts/regions", handler.CountByRegion)
-		r.With(authmw.RequirePermission(db, "devices.read")).Get("/", handler.List)
-		r.With(authmw.RequirePermission(db, "devices.read")).Get("/{hostName}", handler.Get)
+		perm := authmw.RequirePermission(userRoleRepo, "devices.read")
+		r.With(perm).Get("/recommendations", handler.Recommend)
+		r.With(perm).Post("/query", handler.Query)
+		r.With(perm).Get("/search", handler.Search)
+		r.With(perm).Get("/counts/regions", handler.CountByRegion)
+		r.With(perm).Get("/", handler.List)
+		r.With(perm).Get("/{hostName}", handler.Get)
 	})
 }

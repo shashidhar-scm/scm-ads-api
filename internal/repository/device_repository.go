@@ -4,12 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"scm/internal/models"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type DeviceRepository interface {
@@ -27,8 +31,8 @@ type DeviceRepository interface {
 }
 
 type RegionDeviceCount struct {
-	Region string `json:"region"`
-	Count  int    `json:"count"`
+	Region string  `json:"region"`
+	Count  int     `json:"count"`
 	City   *string `json:"city"`
 }
 
@@ -41,16 +45,16 @@ type DeviceRecommendation struct {
 
 	Features map[string]POIFeature `json:"features,omitempty"`
 
-	CollegeCount1km int      `json:"college_count_1km"`
-	CollegeCount2km int      `json:"college_count_2km"`
-	DormCount1km    int      `json:"dorm_count_1km"`
-	HostelCount1km  int      `json:"hostel_count_1km"`
+	CollegeCount1km          int      `json:"college_count_1km"`
+	CollegeCount2km          int      `json:"college_count_2km"`
+	DormCount1km             int      `json:"dorm_count_1km"`
+	HostelCount1km           int      `json:"hostel_count_1km"`
 	NearestCollegeDistanceKm *float64 `json:"nearest_college_distance_km,omitempty"`
 }
 
 type POIFeature struct {
-	Count1km int `json:"count_1km"`
-	Count2km int `json:"count_2km"`
+	Count1km          int      `json:"count_1km"`
+	Count2km          int      `json:"count_2km"`
 	NearestDistanceKm *float64 `json:"nearest_distance_km,omitempty"`
 }
 
@@ -63,14 +67,43 @@ type DeviceFilters struct {
 }
 
 type deviceRepository struct {
-	db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewDeviceRepository(db *sql.DB) DeviceRepository {
-	return &deviceRepository{db: db}
+func NewDeviceRepository(pool *pgxpool.Pool) DeviceRepository {
+	return &deviceRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *deviceRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("device repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *deviceRepository) translateNoRows(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+func (r *deviceRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *deviceRepository) Upsert(ctx context.Context, device *models.Device) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	deviceTypeJSON, err := json.Marshal(device.DeviceType)
 	if err != nil {
 		return fmt.Errorf("marshal device_type: %w", err)
@@ -102,7 +135,10 @@ func (r *deviceRepository) Upsert(ctx context.Context, device *models.Device) er
 	`
 
 	now := time.Now().UTC()
-	_, err = r.db.ExecContext(ctx, query,
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	_, err = r.pool.Exec(execCtx, query,
 		device.ID, deviceTypeJSON, regionJSON, device.Name, device.HostName,
 		device.Description, device.Change, device.LastSyncedAt, device.SyncStatus,
 		device.Project, device.DeviceConfig, device.RttyData,
@@ -115,6 +151,10 @@ func (r *deviceRepository) Upsert(ctx context.Context, device *models.Device) er
 }
 
 func (r *deviceRepository) GetByHostName(ctx context.Context, hostName string) (*models.Device, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, device_type, region, name, host_name, description, change,
 			last_synced_at, sync_status, project, device_config, rtty_data,
@@ -123,16 +163,19 @@ func (r *deviceRepository) GetByHostName(ctx context.Context, hostName string) (
 		WHERE host_name = $1
 	`
 
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var device models.Device
 	var deviceTypeJSON, regionJSON []byte
-	err := r.db.QueryRowContext(ctx, query, hostName).Scan(
+	err := r.pool.QueryRow(rowCtx, query, hostName).Scan(
 		&device.ID, &deviceTypeJSON, &regionJSON, &device.Name, &device.HostName,
 		&device.Description, &device.Change, &device.LastSyncedAt, &device.SyncStatus,
 		&device.Project, &device.DeviceConfig, &device.RttyData,
 		&device.CreatedAt, &device.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("device not found")
 		}
 		return nil, fmt.Errorf("get device: %w", err)
@@ -149,6 +192,10 @@ func (r *deviceRepository) GetByHostName(ctx context.Context, hostName string) (
 }
 
 func (r *deviceRepository) List(ctx context.Context, limit int, offset int) ([]*models.Device, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, device_type, region, name, host_name, description, change,
 			last_synced_at, sync_status, project, device_config, rtty_data,
@@ -169,7 +216,10 @@ func (r *deviceRepository) List(ctx context.Context, limit int, offset int) ([]*
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
@@ -202,8 +252,15 @@ func (r *deviceRepository) List(ctx context.Context, limit int, offset int) ([]*
 }
 
 func (r *deviceRepository) Count(ctx context.Context) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices").Scan(&count)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(queryCtx, "SELECT COUNT(*) FROM devices").Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count devices: %w", err)
 	}
@@ -211,6 +268,10 @@ func (r *deviceRepository) Count(ctx context.Context) (int, error) {
 }
 
 func (r *deviceRepository) ListByProject(ctx context.Context, projectID int, limit int, offset int) ([]*models.Device, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, device_type, region, name, host_name, description, change,
 			last_synced_at, sync_status, project, device_config, rtty_data,
@@ -232,7 +293,10 @@ func (r *deviceRepository) ListByProject(ctx context.Context, projectID int, lim
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list devices by project: %w", err)
 	}
@@ -265,8 +329,15 @@ func (r *deviceRepository) ListByProject(ctx context.Context, projectID int, lim
 }
 
 func (r *deviceRepository) CountByProject(ctx context.Context, projectID int) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices WHERE project = $1", projectID).Scan(&count)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(queryCtx, "SELECT COUNT(*) FROM devices WHERE project = $1", projectID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count devices by project: %w", err)
 	}
@@ -274,6 +345,10 @@ func (r *deviceRepository) CountByProject(ctx context.Context, projectID int) (i
 }
 
 func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFilters, limit int, offset int) ([]*models.Device, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := "SELECT id, device_type, region, name, host_name, description, change, last_synced_at, sync_status, project, device_config, rtty_data, created_at, updated_at FROM devices WHERE 1=1"
 	var args []any
 	argIndex := 1
@@ -285,21 +360,18 @@ func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFi
 	}
 
 	if filters.City != nil {
-		// Search for city in the device_config JSONB field
 		query += fmt.Sprintf(" AND device_config->>'city' = $%d", argIndex)
 		args = append(args, *filters.City)
 		argIndex++
 	}
 
 	if filters.Region != nil {
-		// Filter by region code in the region JSONB field
 		query += fmt.Sprintf(" AND region->>'code' = $%d", argIndex)
 		args = append(args, *filters.Region)
 		argIndex++
 	}
 
 	if filters.DeviceType != nil {
-		// Search for device_type in the device_type JSONB field
 		query += fmt.Sprintf(" AND device_type::text LIKE $%d", argIndex)
 		args = append(args, "%"+*filters.DeviceType+"%")
 		argIndex++
@@ -314,7 +386,10 @@ func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFi
 	query += fmt.Sprintf(" ORDER BY host_name ASC LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
 	args = append(args, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list devices with filters: %w", err)
 	}
@@ -347,6 +422,10 @@ func (r *deviceRepository) ListWithFilters(ctx context.Context, filters DeviceFi
 }
 
 func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceFilters) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := "SELECT COUNT(*) FROM devices WHERE 1=1"
 	var args []any
 	argIndex := 1
@@ -382,7 +461,10 @@ func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceF
 	}
 
 	var count int
-	err := r.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(queryCtx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count devices with filters: %w", err)
 	}
@@ -390,6 +472,10 @@ func (r *deviceRepository) CountWithFilters(ctx context.Context, filters DeviceF
 }
 
 func (r *deviceRepository) CountByRegion(ctx context.Context, city *string, test *bool) ([]RegionDeviceCount, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT
 			NULLIF(device_config->>'city', '') AS city,
@@ -414,7 +500,10 @@ func (r *deviceRepository) CountByRegion(ctx context.Context, city *string, test
 
 	query += " GROUP BY 1, 2 ORDER BY device_count DESC"
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("count devices by region: %w", err)
 	}
@@ -441,6 +530,10 @@ func (r *deviceRepository) CountByRegion(ctx context.Context, city *string, test
 }
 
 func (r *deviceRepository) Search(ctx context.Context, term string, city *string, region *string, limit int, offset int) ([]*models.Device, int, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, 0, err
+	}
+
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
 	whereClause := `
@@ -468,7 +561,10 @@ func (r *deviceRepository) Search(ctx context.Context, term string, city *string
 
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM devices WHERE %s", whereClause)
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+	countCtx, cancelCount := r.withTimeout(ctx)
+	defer cancelCount()
+
+	if err := r.pool.QueryRow(countCtx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count search devices: %w", err)
 	}
 
@@ -484,7 +580,10 @@ func (r *deviceRepository) Search(ctx context.Context, term string, city *string
 
 	args = append(args, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("search devices: %w", err)
 	}
@@ -521,6 +620,10 @@ func (r *deviceRepository) Search(ctx context.Context, term string, city *string
 }
 
 func (r *deviceRepository) Recommend(ctx context.Context, city string, region string, limit int) ([]DeviceRecommendation, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	city = strings.TrimSpace(city)
 	region = strings.TrimSpace(region)
 	if city == "" {
@@ -608,7 +711,10 @@ func (r *deviceRepository) Recommend(ctx context.Context, city string, region st
 		LIMIT $3
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, city, region, limit)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, city, region, limit)
 	if err != nil {
 		return nil, fmt.Errorf("recommend devices: %w", err)
 	}

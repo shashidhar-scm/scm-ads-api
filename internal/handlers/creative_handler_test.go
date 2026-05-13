@@ -181,7 +181,7 @@ func (noopCampaignRepo) ListByEndDate(ctx context.Context, endDate time.Time) ([
 }
 
 func TestUploadCreativeMissingCampaignIDReturnsJSON(t *testing.T) {
-	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, newStubUserRoleRepo(), &config.S3Config{}, nil, &config.Config{})
 	if err != nil {
 		t.Fatalf("NewCreativeHandler: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestScoreVenuesRetailAndFamilyIntentBoosts(t *testing.T) {
 }
 
 func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
-	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, newStubUserRoleRepo(), &config.S3Config{}, nil, &config.Config{})
 	if err != nil {
 		t.Fatalf("NewCreativeHandler: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestSuggestVenuesNoFilesReturnsJSON(t *testing.T) {
 }
 
 func TestSuggestVenuesUnsupportedContentTypeReturnsFileError(t *testing.T) {
-	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(&noopCreativeRepo{}, noopCampaignRepo{}, newStubUserRoleRepo(), &config.S3Config{}, nil, &config.Config{})
 	if err != nil {
 		t.Fatalf("NewCreativeHandler: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestListCreativesByDeviceWeightedRotationPerCampaign(t *testing.T) {
 		{ID: "c1b", CampaignID: "camp1", PlayWeight: 25, UploadedAt: baseTime.Add(-1 * time.Hour)},
 		{ID: "c2a", CampaignID: "camp2", PlayWeight: 100, UploadedAt: baseTime.Add(-3 * time.Hour)},
 	}}
-	h, err := NewCreativeHandler(repo, noopCampaignRepo{}, &config.S3Config{}, nil, &config.Config{})
+	h, err := NewCreativeHandler(repo, noopCampaignRepo{}, newStubUserRoleRepo(), &config.S3Config{}, nil, &config.Config{})
 	if err != nil {
 		t.Fatalf("NewCreativeHandler: %v", err)
 	}

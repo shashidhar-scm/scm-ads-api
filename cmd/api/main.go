@@ -28,6 +28,7 @@ import (
 	"scm/internal/db"
 	"scm/internal/db/migrations"
 	"scm/internal/logger"
+	"scm/internal/platform/database"
 	"scm/internal/repository"
 	"scm/internal/routes"
 	"scm/internal/services"
@@ -38,7 +39,116 @@ func getEnv(key, defaultValue string) string {
 	if strings.TrimSpace(v) == "" {
 		return defaultValue
 	}
+
 	return v
+}
+
+func startPlaceExchangeTokenRefresher(
+	ctx context.Context,
+	cfg *config.Config,
+	tokenRepo repository.PlaceExchangeTokenRepository,
+	consoleClient *services.CityPostConsoleClient,
+	placeClient *services.PlaceExchangeClient,
+	logger *zerolog.Logger,
+) {
+	if tokenRepo == nil || consoleClient == nil || placeClient == nil {
+		return
+	}
+	refreshTime := cfg.PlaceExchangeRefreshTime
+	if strings.TrimSpace(refreshTime) == "" {
+		refreshTime = "00:01"
+	}
+	hour, minute := parseHHMM(refreshTime, 0, 1)
+	timezone := strings.TrimSpace(cfg.PlaceExchangeRefreshTZ)
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		if logger != nil {
+			logger.Warn().Err(err).Str("tz", timezone).Msg("Invalid PLACE_EXCHANGE_REFRESH_TZ, falling back to UTC")
+		}
+		loc = time.UTC
+		timezone = "UTC"
+	}
+
+	go func() {
+		runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		err := refreshPlaceExchangeTokensOnce(runCtx, tokenRepo, consoleClient, placeClient, logger)
+		cancel()
+		if err != nil && logger != nil {
+			logger.Warn().Err(err).Msg("Initial Place Exchange token refresh failed")
+		}
+	}()
+
+	go func() {
+		for {
+			now := time.Now()
+			runAt := nextRunAt(now, loc, hour, minute)
+			delay := time.Until(runAt)
+
+			t := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+
+			runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			err := refreshPlaceExchangeTokensOnce(runCtx, tokenRepo, consoleClient, placeClient, logger)
+			cancel()
+			if err != nil && logger != nil {
+				logger.Warn().Err(err).Msg("Failed to refresh Place Exchange tokens")
+			}
+		}
+	}()
+}
+
+func refreshPlaceExchangeTokensOnce(
+	ctx context.Context,
+	tokenRepo repository.PlaceExchangeTokenRepository,
+	consoleClient *services.CityPostConsoleClient,
+	placeClient *services.PlaceExchangeClient,
+	logger *zerolog.Logger,
+) error {
+	token, err := placeClient.FetchToken(ctx)
+	if err != nil {
+		return err
+	}
+	cities, err := consoleClient.ListProductionProjectNames(ctx)
+	if err != nil {
+		return err
+	}
+	if len(cities) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(cities))
+	updated := 0
+	var lastErr error
+	for _, city := range cities {
+		c := strings.TrimSpace(city)
+		if c == "" {
+			continue
+		}
+		c = strings.ToLower(c)
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		if _, err := tokenRepo.Upsert(ctx, c, token); err != nil {
+			lastErr = err
+			if logger != nil {
+				logger.Warn().Err(err).Str("city", c).Msg("Failed to upsert Place Exchange token")
+			}
+			continue
+		}
+		updated++
+	}
+	if logger != nil && updated > 0 {
+		logger.Info().Int("cities", updated).Msg("Refreshed Place Exchange tokens")
+	}
+	return lastErr
 }
 
 func getEnvInt(key string, defaultValue int) int {
@@ -345,6 +455,29 @@ func main() {
 	}
 	appLogger := logger.New(cfg)
 
+	// Initialize pgx pool (will gradually replace database/sql usages)
+	poolCfg := database.PoolConfigFromApp(cfg)
+	var (
+		poolCtx    context.Context
+		cancelPool context.CancelFunc
+	)
+	if poolCfg.ConnectTimeout > 0 {
+		poolCtx, cancelPool = context.WithTimeout(context.Background(), poolCfg.ConnectTimeout)
+	} else {
+		poolCtx, cancelPool = context.WithCancel(context.Background())
+	}
+	defer cancelPool()
+	pgxPool, err := database.NewPool(poolCtx, cfg.DatabaseURL, poolCfg)
+	if err != nil {
+		appLogger.Fatal().Err(err).Msg("Failed to initialize pgx pool")
+	}
+	defer pgxPool.Close()
+
+	campaignRepo := repository.NewCampaignRepository(pgxPool)
+	creativeRepo := repository.NewCreativeRepository(pgxPool)
+	placeExchangeTokenRepo := repository.NewPlaceExchangeTokenRepository(pgxPool)
+	legacyRevisionRepo := repository.NewLegacyRevisionRepository(pgxPool)
+
 	// Create database if it doesn't exist
 	if err := db.CreateDatabaseIfNotExists(cfg.DatabaseURL); err != nil {
 		appLogger.Fatal().Err(err).Msg("Failed to ensure database exists")
@@ -375,8 +508,7 @@ func main() {
 	// Background jobs
 	jobsCtx, cancelJobs := context.WithCancel(context.Background())
 	defer cancelJobs()
-	campaignRepo := repository.NewCampaignRepository(database.DB)
-	userRepo := repository.NewUserRepository(database.DB)
+	userRepo := repository.NewUserRepository(pgxPool)
 	emailSender := services.NewSMTPSender(
 		cfg.SMTPHost,
 		cfg.SMTPPort,
@@ -386,9 +518,21 @@ func main() {
 		cfg.SMTPUseTLS,
 	)
 	notifier := services.NewCampaignNotifier(campaignRepo, userRepo, emailSender)
+	citypostClient := services.NewCityPostConsoleClient(
+		cfg.CityPostConsoleBaseURL,
+		cfg.CityPostConsoleUsername,
+		cfg.CityPostConsolePassword,
+	)
+	citypostClient.SetAuthScheme(cfg.CityPostConsoleAuthScheme)
+	placeExchangeClient := services.NewPlaceExchangeClient(
+		cfg.PlaceExchangeURL,
+		cfg.PlaceExchangeUsername,
+		cfg.PlaceExchangePassword,
+	)
 	startScheduledCampaignActivator(jobsCtx, campaignRepo, appLogger)
 	startScheduledCampaignCompleter(jobsCtx, campaignRepo, notifier, appLogger)
 	startCampaignNotificationDispatcher(jobsCtx, notifier, appLogger)
+	startPlaceExchangeTokenRefresher(jobsCtx, cfg, placeExchangeTokenRepo, citypostClient, placeExchangeClient, appLogger)
 
 	popClient := services.NewPopClient(cfg.PopAPIBaseURL)
 	startPopImpressionsSync(jobsCtx, database.DB, popClient, appLogger)
@@ -400,7 +544,29 @@ func main() {
 	}
 
 	// Create router and setup routes
-	router, err := routes.SetupRoutes(database.DB, replicatorDB, cfg, s3Config)
+	advertiserRepo := repository.NewAdvertiserRepository(pgxPool)
+	deviceRepo := repository.NewDeviceRepository(pgxPool)
+	projectRepo := repository.NewProjectRepository(pgxPool)
+	roleRepo := repository.NewRoleRepository(pgxPool)
+	permissionRepo := repository.NewPermissionRepository(pgxPool)
+	userRoleRepo := repository.NewUserRoleRepository(pgxPool)
+	router, err := routes.SetupRoutes(
+		database.DB,
+		replicatorDB,
+		cfg,
+		s3Config,
+		campaignRepo,
+		creativeRepo,
+		userRepo,
+		advertiserRepo,
+		deviceRepo,
+		projectRepo,
+		roleRepo,
+		permissionRepo,
+		userRoleRepo,
+		placeExchangeTokenRepo,
+		legacyRevisionRepo,
+	)
 	if err != nil {
 		appLogger.Fatal().Err(err).Msg("Failed to setup routes")
 	}

@@ -17,15 +17,16 @@ import (
 )
 
 type UserHandler struct {
-	users repository.UserRepository
-	v     *validator.Validate
-	db    *sql.DB
+	users     repository.UserRepository
+	v         *validator.Validate
+	db        *sql.DB
+	userRoles repository.UserRoleRepository
 }
 
-func NewUserHandler(users repository.UserRepository, db *sql.DB) *UserHandler {
+func NewUserHandler(users repository.UserRepository, db *sql.DB, userRoles repository.UserRoleRepository) *UserHandler {
 	v := validator.New()
 	_ = v.RegisterValidation("strongpassword", strongPassword)
-	return &UserHandler{users: users, v: v, db: db}
+	return &UserHandler{users: users, v: v, db: db, userRoles: userRoles}
 }
 
 // @Tags Account
@@ -177,24 +178,24 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/users/{id}/ [put]
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
-        return
-    }
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
+		return
+	}
 
-    var req models.UpdateUserRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
-        return
-    }
+	var req models.UpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
 
-    if req.UserName != nil {
-        if err := h.v.Var(*req.UserName, "alphanum"); err != nil {
-            writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "user_name must contain only letters and numbers")
-            return
-        }
-    }
+	if req.UserName != nil {
+		if err := h.v.Var(*req.UserName, "alphanum"); err != nil {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", "user_name must contain only letters and numbers")
+			return
+		}
+	}
 
 	if req.Status != nil {
 		v := strings.ToLower(strings.TrimSpace(*req.Status))
@@ -204,7 +205,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Status = &v
 
-		if h.db == nil {
+		if h.userRoles == nil {
 			writeJSONErrorResponse(w, http.StatusForbidden, "forbidden", "insufficient permissions")
 			return
 		}
@@ -213,8 +214,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrorResponse(w, http.StatusUnauthorized, "unauthorized", "missing user identity")
 			return
 		}
-		ur := repository.NewUserRoleRepository(h.db)
-		isSuper, err := ur.IsSuperAdmin(r.Context(), currentUserID)
+		isSuper, err := h.userRoles.IsSuperAdmin(r.Context(), currentUserID)
 		if err != nil {
 			writeJSONErrorResponse(w, http.StatusInternalServerError, "update_user_failed", "Failed to update user")
 			return
@@ -225,54 +225,54 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-    if err := h.users.UpdateProfile(r.Context(), id, &req); err != nil {
-        if err.Error() == "user not found" {
-            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
-            return
-        }
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "update_user_failed", "Failed to update user")
-        return
-    }
+	if err := h.users.UpdateProfile(r.Context(), id, &req); err != nil {
+		if err.Error() == "user not found" {
+			writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "update_user_failed", "Failed to update user")
+		return
+	}
 
-    updated, err := h.users.GetByID(r.Context(), id)
-    if err != nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
-        return
-    }
+	updated, err := h.users.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+		return
+	}
 
-    if h.db != nil {
-        rows, err := h.db.QueryContext(r.Context(), `
+	if h.db != nil {
+		rows, err := h.db.QueryContext(r.Context(), `
             SELECT ro.name
             FROM user_roles ur
             JOIN roles ro ON ro.id = ur.role_id
             WHERE ur.user_id = $1
             ORDER BY ur.created_at ASC
         `, updated.ID)
-        if err != nil {
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
-            return
-        }
-        defer rows.Close()
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+			return
+		}
+		defer rows.Close()
 
-        role := ""
-        for rows.Next() {
-            var roleName string
-            if err := rows.Scan(&roleName); err != nil {
-                writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
-                return
-            }
-            role = roleName
-            break
-        }
-        if err := rows.Err(); err != nil {
-            writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
-            return
-        }
-        updated.Role = role
-    }
+		role := ""
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err != nil {
+				writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+				return
+			}
+			role = roleName
+			break
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to fetch updated user")
+			return
+		}
+		updated.Role = role
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(updated)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(updated)
 }
 
 // @Tags Account
@@ -289,54 +289,54 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/users/{id}/password [put]
 func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
-        return
-    }
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
+		return
+	}
 
-    var req models.ChangePasswordRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
-        return
-    }
+	var req models.ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
 
-    if err := h.v.Struct(req); err != nil {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", validationMessage(err))
-        return
-    }
+	if err := h.v.Struct(req); err != nil {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "validation_error", validationMessage(err))
+		return
+	}
 
-    u, err := h.users.GetByID(r.Context(), id)
-    if err != nil {
-        if err.Error() == "user not found" {
-            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
-            return
-        }
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
-        return
-    }
+	u, err := h.users.GetByID(r.Context(), id)
+	if err != nil {
+		if err.Error() == "user not found" {
+			writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "get_user_failed", "Failed to get user")
+		return
+	}
 
-    if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.OldPassword)); err != nil {
-        writeJSONErrorResponse(w, http.StatusUnauthorized, "invalid_password", "Old password is incorrect")
-        return
-    }
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.OldPassword)); err != nil {
+		writeJSONErrorResponse(w, http.StatusUnauthorized, "invalid_password", "Old password is incorrect")
+		return
+	}
 
-    hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-    if err != nil {
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "hash_failed", "Failed to change password")
-        return
-    }
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "hash_failed", "Failed to change password")
+		return
+	}
 
-    if err := h.users.UpdatePasswordHash(r.Context(), id, string(hash)); err != nil {
-        if err.Error() == "user not found" {
-            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
-            return
-        }
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "change_password_failed", "Failed to change password")
-        return
-    }
+	if err := h.users.UpdatePasswordHash(r.Context(), id, string(hash)); err != nil {
+		if err.Error() == "user not found" {
+			writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
+			return
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "change_password_failed", "Failed to change password")
+		return
+	}
 
-    writeJSONMessage(w, http.StatusOK, "password updated")
+	writeJSONMessage(w, http.StatusOK, "password updated")
 }
 
 // @Tags Account
@@ -350,28 +350,28 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/v1/users/{id}/ [delete]
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
-    if id == "" {
-        writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
-        return
-    }
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_request", "User ID is required")
+		return
+	}
 
-    if err := h.users.Delete(r.Context(), id); err != nil {
-        if err.Error() == "user not found" {
-            writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
-            return
-        }
-        var pqErr *pq.Error
-        if errors.As(err, &pqErr) {
-            // 23503 = foreign_key_violation (e.g. user is referenced by user_roles or other tables)
-            if string(pqErr.Code) == "23503" {
-                writeJSONErrorResponse(w, http.StatusConflict, "user_in_use", "User cannot be deleted because it is referenced by other records")
-                return
-            }
-        }
-        writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_user_failed", "Failed to delete user")
-        return
-    }
+	if err := h.users.Delete(r.Context(), id); err != nil {
+		if err.Error() == "user not found" {
+			writeJSONErrorResponse(w, http.StatusNotFound, "user_not_found", "User not found")
+			return
+		}
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			// 23503 = foreign_key_violation (e.g. user is referenced by user_roles or other tables)
+			if string(pqErr.Code) == "23503" {
+				writeJSONErrorResponse(w, http.StatusConflict, "user_in_use", "User cannot be deleted because it is referenced by other records")
+				return
+			}
+		}
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "delete_user_failed", "Failed to delete user")
+		return
+	}
 
-    writeJSONMessage(w, http.StatusOK, "User has been deleted successfully")
+	writeJSONMessage(w, http.StatusOK, "User has been deleted successfully")
 }

@@ -27,9 +27,9 @@ type CityPostConsoleClient struct {
 	authScheme string
 	tokenTTL   time.Duration
 
-	mu        sync.Mutex
-	token     string
-	tokenExp  time.Time
+	mu       sync.Mutex
+	token    string
+	tokenExp time.Time
 }
 
 func NewCityPostConsoleClient(baseURL, username, password string) *CityPostConsoleClient {
@@ -245,6 +245,24 @@ func (c *CityPostConsoleClient) ListProjects(ctx context.Context) ([]map[string]
 	}
 	merged := append(projTrue, projFalse...)
 	return merged, nil
+}
+
+// ListProductionProjectNames returns the names of production projects (cities).
+func (c *CityPostConsoleClient) ListProductionProjectNames(ctx context.Context) ([]string, error) {
+	projects, err := c.fetchProjects(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(projects))
+	for _, p := range projects {
+		if name, ok := p["name"].(string); ok {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names, nil
 }
 
 // fetchProjects is a helper that fetches projects with the given production flag

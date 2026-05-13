@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 
@@ -19,8 +18,7 @@ func writeAuthzError(w http.ResponseWriter, status int, code string, message str
 	_ = json.NewEncoder(w).Encode(errorResponse{Error: code, Message: message})
 }
 
-func RequirePermission(db *sql.DB, permission string) func(http.Handler) http.Handler {
-	ur := repository.NewUserRoleRepository(db)
+func RequirePermission(userRoles repository.UserRoleRepository, permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userID, _ := r.Context().Value(CtxUserID).(string)
@@ -29,7 +27,7 @@ func RequirePermission(db *sql.DB, permission string) func(http.Handler) http.Ha
 				return
 			}
 
-			isSuper, err := ur.IsSuperAdmin(r.Context(), userID)
+			isSuper, err := userRoles.IsSuperAdmin(r.Context(), userID)
 			if err != nil {
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return
@@ -40,7 +38,7 @@ func RequirePermission(db *sql.DB, permission string) func(http.Handler) http.Ha
 			}
 
 			// Permission must be granted by a global role (super_admin bypassed above).
-			ok, err := ur.HasPermission(r.Context(), userID, permission, nil)
+			ok, err := userRoles.HasPermission(r.Context(), userID, permission, nil)
 			if err != nil {
 				writeAuthzError(w, http.StatusInternalServerError, "authz_failed", "failed to check permissions")
 				return

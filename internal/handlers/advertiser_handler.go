@@ -20,17 +20,19 @@ import (
 )
 
 type AdvertiserHandler struct {
-    repo      interfaces.AdvertiserRepository
-    db        *sql.DB
-    validator *validator.Validate
+	repo      interfaces.AdvertiserRepository
+	db        *sql.DB
+	userRoles repository.UserRoleRepository
+	validator *validator.Validate
 }
 
-func NewAdvertiserHandler(repo interfaces.AdvertiserRepository, db *sql.DB) *AdvertiserHandler {
-    return &AdvertiserHandler{
-        repo:      repo,
-        db:        db,
-        validator: validator.New(),
-    }
+func NewAdvertiserHandler(repo interfaces.AdvertiserRepository, db *sql.DB, userRoles repository.UserRoleRepository) *AdvertiserHandler {
+	return &AdvertiserHandler{
+		repo:      repo,
+		db:        db,
+		userRoles: userRoles,
+		validator: validator.New(),
+	}
 }
 
 func (h *AdvertiserHandler) listAdvertisersCreatedByUser(ctx context.Context, userID string, limit int, offset int) ([]models.Advertiser, error) {
@@ -257,13 +259,12 @@ func (h *AdvertiserHandler) GetAdvertiser(w http.ResponseWriter, r *http.Request
 	userID, _ := r.Context().Value(middleware.CtxUserID).(string)
 	isSuper := false
 	isAdmin := false
-	if h.db != nil && strings.TrimSpace(userID) != "" {
-		ur := repository.NewUserRoleRepository(h.db)
-		v, err := ur.IsSuperAdmin(r.Context(), userID)
+	if h.userRoles != nil && strings.TrimSpace(userID) != "" {
+		v, err := h.userRoles.IsSuperAdmin(r.Context(), userID)
 		if err == nil {
 			isSuper = v
 		}
-		va, err := ur.IsAdmin(r.Context(), userID)
+		va, err := h.userRoles.IsAdmin(r.Context(), userID)
 		if err == nil {
 			isAdmin = va
 		}
@@ -307,13 +308,12 @@ func (h *AdvertiserHandler) ListAdvertisers(w http.ResponseWriter, r *http.Reque
 
 	isSuper := false
 	isAdmin := false
-	if h.db != nil && strings.TrimSpace(userID) != "" {
-		ur := repository.NewUserRoleRepository(h.db)
-		v, err := ur.IsSuperAdmin(r.Context(), userID)
+	if h.userRoles != nil && strings.TrimSpace(userID) != "" {
+		v, err := h.userRoles.IsSuperAdmin(r.Context(), userID)
 		if err == nil {
 			isSuper = v
 		}
-		va, err := ur.IsAdmin(r.Context(), userID)
+		va, err := h.userRoles.IsAdmin(r.Context(), userID)
 		if err == nil {
 			isAdmin = va
 		}
@@ -381,13 +381,12 @@ func (h *AdvertiserHandler) SearchAdvertisers(w http.ResponseWriter, r *http.Req
 
 	isSuper := false
 	isAdmin := false
-	if h.db != nil && strings.TrimSpace(userID) != "" {
-		ur := repository.NewUserRoleRepository(h.db)
-		v, err := ur.IsSuperAdmin(r.Context(), userID)
+	if h.userRoles != nil && strings.TrimSpace(userID) != "" {
+		v, err := h.userRoles.IsSuperAdmin(r.Context(), userID)
 		if err == nil {
 			isSuper = v
 		}
-		va, err := ur.IsAdmin(r.Context(), userID)
+		va, err := h.userRoles.IsAdmin(r.Context(), userID)
 		if err == nil {
 			isAdmin = va
 		}

@@ -24,11 +24,11 @@ type RBACHandler struct {
 	v           *validator.Validate
 }
 
-func NewRBACHandler(db *sql.DB) *RBACHandler {
+func NewRBACHandler(roleRepo repository.RoleRepository, permissionRepo repository.PermissionRepository, userRoleRepo repository.UserRoleRepository) *RBACHandler {
 	return &RBACHandler{
-		roles:       repository.NewRoleRepository(db),
-		permissions: repository.NewPermissionRepository(db),
-		userRoles:   repository.NewUserRoleRepository(db),
+		roles:       roleRepo,
+		permissions: permissionRepo,
+		userRoles:   userRoleRepo,
 		v:           validator.New(),
 	}
 }

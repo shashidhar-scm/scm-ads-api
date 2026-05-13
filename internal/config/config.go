@@ -15,6 +15,12 @@ type Config struct {
 	DatabaseURL            string
 	ReplicatorDatabaseURL  string
 	LogLevel               string
+	DBMaxConnections       int
+	DBMinConnections       int
+	DBMaxConnLifetimeMin   int
+	DBMaxConnIdleMin       int
+	DBHealthCheckSeconds   int
+	DBConnectTimeoutSec    int
 	AuthVerboseErrors      bool
 	AuthReturnResetToken   bool
 	AuthResetPasswordURL   string
@@ -34,6 +40,12 @@ type Config struct {
 	CityPostConsolePassword   string
 	CityPostConsoleAuthScheme string
 	PopAPIBaseURL             string
+
+	PlaceExchangeURL         string
+	PlaceExchangeUsername    string
+	PlaceExchangePassword    string
+	PlaceExchangeRefreshTime string
+	PlaceExchangeRefreshTZ   string
 
 	JWTSecret           string
 	JWTExpiresInSeconds int64
@@ -77,6 +89,12 @@ func Load() (*Config, error) {
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:            databaseURL,
 		ReplicatorDatabaseURL:  replicatorDatabaseURL,
+		DBMaxConnections:       getEnvInt("DB_MAX_CONNECTIONS", 50),
+		DBMinConnections:       getEnvInt("DB_MIN_CONNECTIONS", 5),
+		DBMaxConnLifetimeMin:   getEnvInt("DB_MAX_CONN_LIFETIME_MIN", 60),
+		DBMaxConnIdleMin:       getEnvInt("DB_MAX_CONN_IDLE_MIN", 15),
+		DBHealthCheckSeconds:   getEnvInt("DB_HEALTHCHECK_SECONDS", 30),
+		DBConnectTimeoutSec:    getEnvInt("DB_CONNECT_TIMEOUT_SECONDS", 5),
 		AuthVerboseErrors:      getEnvBool("AUTH_VERBOSE_ERRORS", false),
 		AuthReturnResetToken:   getEnvBool("AUTH_RETURN_RESET_TOKEN", false),
 		RateLimitWindowSeconds: getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60),
@@ -98,6 +116,11 @@ func Load() (*Config, error) {
 		CityPostConsolePassword:   getEnv("CITYPOST_CONSOLE_PASSWORD", ""),
 		CityPostConsoleAuthScheme: getEnv("CITYPOST_CONSOLE_AUTH_SCHEME", "Token"),
 		PopAPIBaseURL:             getEnv("POP_API_BASE_URL", "https://pop-api.citypost.us"),
+		PlaceExchangeURL:          getEnv("PLACE_EXCHANGE_URL", ""),
+		PlaceExchangeUsername:     getEnv("PLACE_EXCHANGE_USERNAME", ""),
+		PlaceExchangePassword:     getEnv("PLACE_EXCHANGE_PASSWORD", ""),
+		PlaceExchangeRefreshTime:  getEnv("PLACE_EXCHANGE_REFRESH_TIME", "00:01"),
+		PlaceExchangeRefreshTZ:    getEnv("PLACE_EXCHANGE_REFRESH_TZ", "UTC"),
 
 		SMTPHost:     getEnv("SMTP_HOST", ""),
 		SMTPPort:     getEnv("SMTP_PORT", ""),
@@ -145,8 +168,40 @@ func (c *Config) validate() error {
 		missing = append(missing, "CITYPOST_CONSOLE_PASSWORD")
 	}
 
+	if strings.TrimSpace(c.PlaceExchangeURL) == "" {
+		missing = append(missing, "PLACE_EXCHANGE_URL")
+	}
+	if strings.TrimSpace(c.PlaceExchangeUsername) == "" {
+		missing = append(missing, "PLACE_EXCHANGE_USERNAME")
+	}
+	if strings.TrimSpace(c.PlaceExchangePassword) == "" {
+		missing = append(missing, "PLACE_EXCHANGE_PASSWORD")
+	}
+
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+
+	if c.DBMaxConnections <= 0 {
+		return fmt.Errorf("DB_MAX_CONNECTIONS must be positive")
+	}
+	if c.DBMinConnections < 0 {
+		return fmt.Errorf("DB_MIN_CONNECTIONS cannot be negative")
+	}
+	if c.DBMinConnections > c.DBMaxConnections {
+		return fmt.Errorf("DB_MIN_CONNECTIONS cannot exceed DB_MAX_CONNECTIONS")
+	}
+	if c.DBMaxConnLifetimeMin <= 0 {
+		return fmt.Errorf("DB_MAX_CONN_LIFETIME_MIN must be positive")
+	}
+	if c.DBMaxConnIdleMin < 0 {
+		return fmt.Errorf("DB_MAX_CONN_IDLE_MIN cannot be negative")
+	}
+	if c.DBHealthCheckSeconds <= 0 {
+		return fmt.Errorf("DB_HEALTHCHECK_SECONDS must be positive")
+	}
+	if c.DBConnectTimeoutSec < 0 {
+		return fmt.Errorf("DB_CONNECT_TIMEOUT_SECONDS cannot be negative")
 	}
 
 	if c.Environment != "development" && c.JWTSecret == "dev-secret" {

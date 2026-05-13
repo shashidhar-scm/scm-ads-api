@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -18,14 +19,29 @@ import (
 	"scm/internal/repository"
 )
 
-// generateRevisionID creates a revision ID from data bytes
-// Format: 1-{first 8 chars of SHA256 hash}
-// Similar to CouchDB/Sync Gateway revision IDs
-func generateRevisionID(data []byte) string {
+const (
+	docTypeTheme      = "theme"
+	docTypePoster     = "poster"
+	docTypeAdPoster   = "adposter"
+	docTypeContent    = "content"
+	docTypeLoopPoster = "loop"
+)
+
+func revisionHashSuffix(data []byte) string {
 	hash := sha256.Sum256(data)
-	hashStr := hex.EncodeToString(hash[:])
-	// Use first 8 characters of hash for brevity
-	return "1-" + hashStr[:8]
+	return hex.EncodeToString(hash[:])[:8]
+}
+
+func formatRevision(generation int, hashSuffix string) string {
+	if generation < 1 {
+		generation = 1
+	}
+	return fmt.Sprintf("%d-%s", generation, hashSuffix)
+}
+
+// generateRevisionID keeps backward compatibility when revision tracking is unavailable.
+func generateRevisionID(data []byte) string {
+	return formatRevision(1, revisionHashSuffix(data))
 }
 
 func normalizeLegacyDateString(s string) string {
@@ -117,17 +133,149 @@ func normalizeLegacyDoc(raw []byte) ([]byte, error) {
 }
 
 type LegacyHandler struct {
-	db        *sql.DB
-	replicaDB *sql.DB
-	creative  repository.CreativeRepository
+	db                  *sql.DB
+	replicaDB           *sql.DB
+	creative            repository.CreativeRepository
+	placeExchangeTokens repository.PlaceExchangeTokenRepository
+	revisions           repository.LegacyRevisionRepository
 }
 
-func NewLegacyHandler(db *sql.DB, replicaDB *sql.DB) *LegacyHandler {
-	var creativeRepo repository.CreativeRepository
-	if db != nil {
-		creativeRepo = repository.NewCreativeRepository(db)
+func selectPosterDisplayID(defaultID string, doc map[string]any) string {
+	candidates := []string{
+		"posterId",
+		"poster_id",
+		"posterID",
+		"posterCode",
+		"id",
 	}
-	return &LegacyHandler{db: db, replicaDB: replicaDB, creative: creativeRepo}
+	for _, key := range candidates {
+		if raw, ok := doc[key]; ok {
+			switch v := raw.(type) {
+			case string:
+				if s := strings.TrimSpace(v); s != "" {
+					return s
+				}
+			case fmt.Stringer:
+				if s := strings.TrimSpace(v.String()); s != "" {
+					return s
+				}
+			case json.Number:
+				if s := strings.TrimSpace(v.String()); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return defaultID
+}
+
+func selectThemeDisplayID(doc map[string]any) string {
+	candidates := []string{
+		"theme_id",
+		"themeId",
+		"themeID",
+		"id",
+	}
+	for _, key := range candidates {
+		if raw, ok := doc[key]; ok {
+			switch v := raw.(type) {
+			case string:
+				if s := strings.TrimSpace(v); s != "" {
+					return s
+				}
+			case fmt.Stringer:
+				if s := strings.TrimSpace(v.String()); s != "" {
+					return s
+				}
+			case json.Number:
+				if s := strings.TrimSpace(v.String()); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func NewLegacyHandler(db *sql.DB, replicaDB *sql.DB, creativeRepo repository.CreativeRepository, placeExchangeRepo repository.PlaceExchangeTokenRepository, revisionRepo repository.LegacyRevisionRepository) *LegacyHandler {
+	return &LegacyHandler{db: db, replicaDB: replicaDB, creative: creativeRepo, placeExchangeTokens: placeExchangeRepo, revisions: revisionRepo}
+}
+
+func extractRegion(doc map[string]any) string {
+	keys := []string{"region", "region_name", "city"}
+	for _, k := range keys {
+		if v, ok := doc[k]; ok {
+			switch val := v.(type) {
+			case string:
+				if s := strings.TrimSpace(val); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeRegion(region string) string {
+	return strings.ToLower(strings.TrimSpace(region))
+}
+
+func regionOrFallback(doc map[string]any, fallback string) string {
+	if doc != nil {
+		if r := extractRegion(doc); strings.TrimSpace(r) != "" {
+			return r
+		}
+	}
+	return fallback
+}
+
+func (h *LegacyHandler) computeRevision(ctx context.Context, docType, region, docID string, data []byte) (string, int64) {
+	hashSuffix := revisionHashSuffix(data)
+	normRegion := normalizeRegion(region)
+	if h.revisions == nil || normRegion == "" {
+		return formatRevision(1, hashSuffix), 0
+	}
+	rev, seq, err := h.revisions.EnsureRevision(ctx, docType, normRegion, docID, hashSuffix)
+	if err != nil {
+		return formatRevision(1, hashSuffix), 0
+	}
+	return rev, seq
+}
+
+func (h *LegacyHandler) tryServePlaceExchangeToken(w http.ResponseWriter, r *http.Request, docID string) bool {
+	if h.placeExchangeTokens == nil {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(docID))
+	if normalized == "" || !strings.HasSuffix(normalized, "-access-token") {
+		return false
+	}
+
+	tokenDoc, err := h.placeExchangeTokens.GetByDocID(r.Context(), normalized)
+	if err != nil {
+		if errors.Is(err, repository.ErrPlaceExchangeTokenNotFound) {
+			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "token not found")
+		} else {
+			writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to load token")
+		}
+		return true
+	}
+
+	resp := map[string]any{
+		"_id":        tokenDoc.DocID,
+		"city":       tokenDoc.City,
+		"token":      tokenDoc.Token,
+		"created_at": tokenDoc.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at": tokenDoc.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if data, err := json.Marshal(resp); err == nil {
+		resp["_rev"] = generateRevisionID(data)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+	return true
 }
 
 // GetTheme handles /scm-api/theme?theme_id=...&rev=...
@@ -169,8 +317,14 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate revision from theme data
-	currentRev := generateRevisionID(dataVal)
+	var rawDoc map[string]any
+	if err := json.Unmarshal(dataVal, &rawDoc); err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse theme data")
+		return
+	}
+
+	regionForDoc := extractRegion(rawDoc)
+	currentRev, _ := h.computeRevision(r.Context(), docTypeTheme, regionForDoc, themeID, dataVal)
 
 	// Check if client has current version
 	if clientRev != "" && clientRev == currentRev {
@@ -184,18 +338,17 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var themeData json.RawMessage = dataVal
-	{
-		var doc any
-		dec := json.NewDecoder(bytes.NewReader(themeData))
-		dec.UseNumber()
-		if err := dec.Decode(&doc); err == nil {
-			if m, ok := doc.(map[string]any); ok {
-				m["_id"] = nil
-				if b, err := json.Marshal(m); err == nil {
-					themeData = b
-				}
+	themeData := dataVal
+	if rawDoc != nil {
+		cloned := make(map[string]any, len(rawDoc))
+		for k, v := range rawDoc {
+			if k == "_id" {
+				continue
 			}
+			cloned[k] = v
+		}
+		if b, err := json.Marshal(cloned); err == nil {
+			themeData = b
 		}
 	}
 
@@ -205,6 +358,148 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 		"rev":    currentRev,
 		"theme":  []json.RawMessage{themeData},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetAllThemes handles /themes/_all_docs - CouchDB-style listing of all themes
+// @Summary Get all themes metadata
+// @Description Returns CouchDB-style _all_docs response with optional region filter.
+// @Tags Legacy
+// @Produce json
+// @Param include_docs query boolean false "Include full document in response"
+// @Param limit query integer false "Limit number of results"
+// @Param skip query integer false "Skip number of results"
+// @Param region query string false "Filter by region (e.g., au, jct)"
+// @Success 200 {object} map[string]interface{} "CouchDB-style response with total_rows, offset, and rows array"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /themes/_all_docs [get]
+func (h *LegacyHandler) GetAllThemes(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	q := r.URL.Query()
+	includeDocs := q.Get("include_docs") == "true"
+	region := strings.TrimSpace(q.Get("region"))
+	limit := 1000
+	skip := 0
+
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if skipStr := q.Get("skip"); skipStr != "" {
+		if s, err := strconv.Atoi(skipStr); err == nil && s >= 0 {
+			skip = s
+		}
+	}
+
+	statusClause := "upper(btrim(COALESCE(NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')"
+	orderExpr := "COALESCE(NULLIF(data->>'theme_id', ''), NULLIF(data->>'themeId', ''), NULLIF(data->>'id', ''))"
+
+	var query string
+	var args []interface{}
+	if region != "" {
+		query = fmt.Sprintf(`SELECT data FROM citypost.theme
+			WHERE %s
+				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', ''), ''))) = lower(btrim($1))
+			ORDER BY %s
+			LIMIT $2 OFFSET $3`, statusClause, orderExpr)
+		args = []interface{}{region, limit, skip}
+	} else {
+		query = fmt.Sprintf(`SELECT data FROM citypost.theme
+			WHERE %s
+			ORDER BY %s
+			LIMIT $1 OFFSET $2`, statusClause, orderExpr)
+		args = []interface{}{limit, skip}
+	}
+
+	rows, err := h.replicaDB.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to query themes")
+		return
+	}
+	defer rows.Close()
+
+	// Count query
+	var totalRows int
+	var countQuery string
+	var countArgs []interface{}
+	if region != "" {
+		countQuery = fmt.Sprintf(`SELECT COUNT(*) FROM citypost.theme
+			WHERE %s
+				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', ''), ''))) = lower(btrim($1))`, statusClause)
+		countArgs = []interface{}{region}
+	} else {
+		countQuery = fmt.Sprintf(`SELECT COUNT(*) FROM citypost.theme WHERE %s`, statusClause)
+		countArgs = []interface{}{}
+	}
+	if err := h.replicaDB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&totalRows); err != nil {
+		totalRows = 0
+	}
+
+	type Row struct {
+		ID    string                 `json:"id"`
+		Key   string                 `json:"key"`
+		Value map[string]string      `json:"value"`
+		Doc   map[string]interface{} `json:"doc,omitempty"`
+	}
+
+	result := []Row{}
+	var maxSeq int64
+	for rows.Next() {
+		var dataBytes []byte
+		if err := rows.Scan(&dataBytes); err != nil {
+			continue
+		}
+
+		var doc map[string]interface{}
+		displayID := ""
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			displayID = selectThemeDisplayID(doc)
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.computeRevision(r.Context(), docTypeTheme, regionForDoc, displayID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+
+		row := Row{
+			ID:  displayID,
+			Key: displayID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs && doc != nil {
+			doc["_id"] = displayID
+			doc["_rev"] = rev
+			row.Doc = doc
+		}
+
+		result = append(result, row)
+	}
+
+	updateSeq := maxSeq
+	if updateSeq == 0 {
+		updateSeq = int64(totalRows)
+	}
+
+	resp := map[string]interface{}{
+		"rows":       result,
+		"total_rows": totalRows,
+		"update_seq": updateSeq,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -595,7 +890,7 @@ func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 		"ad_posters": adPosters,
 	}
 	combinedBytes, _ := json.Marshal(combinedData)
-	currentRev := generateRevisionID(combinedBytes)
+	currentRev, _ := h.computeRevision(r.Context(), docTypeContent, region, fmt.Sprintf("%s:%s", city, region), combinedBytes)
 
 	// Check if client has current version
 	if clientRev != "" && clientRev == currentRev {
@@ -647,14 +942,15 @@ func (h *LegacyHandler) GetPosterByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query poster by mongo_id, poster_id (UUID), or posterId field in JSONB
-	query := `SELECT data FROM citypost.posters 
+	query := `SELECT mongo_id, data FROM citypost.posters 
 		WHERE mongo_id = $1 
 		   OR poster_id::text = $1 
 		   OR data->>'posterId' = $1 
 		LIMIT 1`
-	
+
+	var canonicalID string
 	var dataBytes []byte
-	if err := h.replicaDB.QueryRowContext(r.Context(), query, posterID).Scan(&dataBytes); err != nil {
+	if err := h.replicaDB.QueryRowContext(r.Context(), query, posterID).Scan(&canonicalID, &dataBytes); err != nil {
 		if err == sql.ErrNoRows {
 			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "poster not found")
 			return
@@ -663,15 +959,18 @@ func (h *LegacyHandler) GetPosterByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate revision from data
-	rev := generateRevisionID(dataBytes)
-
-	// Parse and add CouchDB-style fields
 	var doc map[string]interface{}
 	if err := json.Unmarshal(dataBytes, &doc); err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse poster data")
 		return
 	}
+
+	region := extractRegion(doc)
+	canonicalID = strings.TrimSpace(canonicalID)
+	if canonicalID == "" {
+		canonicalID = posterID
+	}
+	rev, _ := h.computeRevision(r.Context(), docTypePoster, region, canonicalID, dataBytes)
 
 	doc["_id"] = posterID
 	doc["_rev"] = rev
@@ -719,7 +1018,7 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 	// Build query with optional region filter
 	var query string
 	var args []interface{}
-	
+
 	if region != "" {
 		query = `SELECT mongo_id, data
 			FROM citypost.posters
@@ -748,7 +1047,7 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 	var totalRows int
 	var countQuery string
 	var countArgs []interface{}
-	
+
 	if region != "" {
 		countQuery = `SELECT COUNT(*) FROM citypost.posters
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
@@ -759,7 +1058,7 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')`
 		countArgs = []interface{}{}
 	}
-	
+
 	if err := h.replicaDB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&totalRows); err != nil {
 		totalRows = 0
 	}
@@ -772,6 +1071,7 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := []Row{}
+	var maxSeq int64
 	for rows.Next() {
 		var mongoID string
 		var dataBytes []byte
@@ -779,33 +1079,52 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Generate revision from data
-		rev := generateRevisionID(dataBytes)
+		var doc map[string]interface{}
+		displayID := mongoID
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			displayID = selectPosterDisplayID(mongoID, doc)
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.computeRevision(r.Context(), docTypePoster, regionForDoc, mongoID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
 
 		row := Row{
-			ID:  mongoID,
-			Key: mongoID,
+			ID:  displayID,
+			Key: displayID,
 			Value: map[string]string{
 				"rev": rev,
 			},
 		}
 
-		if includeDocs {
-			var doc map[string]interface{}
-			if err := json.Unmarshal(dataBytes, &doc); err == nil {
-				doc["_id"] = mongoID
-				doc["_rev"] = rev
-				row.Doc = doc
-			}
+		if includeDocs && doc != nil {
+			doc["_id"] = displayID
+			doc["_rev"] = rev
+			row.Doc = doc
 		}
 
 		result = append(result, row)
 	}
 
+	updateSeq := maxSeq
+	if strings.TrimSpace(region) != "" && h.revisions != nil {
+		if seq, err := h.revisions.GetRegionUpdateSeq(r.Context(), docTypePoster, normalizeRegion(region)); err == nil && seq > updateSeq {
+			updateSeq = seq
+		}
+	}
+	if updateSeq == 0 {
+		updateSeq = int64(totalRows)
+	}
+
 	resp := map[string]interface{}{
 		"rows":       result,
 		"total_rows": totalRows,
-		"update_seq": totalRows,
+		"update_seq": updateSeq,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -839,13 +1158,16 @@ func (h *LegacyHandler) GetAdPosterByID(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Query ad_poster by external_id or adPosterId field in JSONB
-	query := `SELECT data FROM citypost.ad_posters 
-		WHERE external_id = $1 
-		   OR data->>'adPosterId' = $1 
+	query := `SELECT external_id, data FROM citypost.ad_posters 
+		WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+			AND (external_id = $1 
+				OR data->>'adPosterId' = $1 
+				OR data->>'id' = $1)
 		LIMIT 1`
-	
+
+	var canonicalID string
 	var dataBytes []byte
-	if err := h.replicaDB.QueryRowContext(r.Context(), query, adPosterID).Scan(&dataBytes); err != nil {
+	if err := h.replicaDB.QueryRowContext(r.Context(), query, adPosterID).Scan(&canonicalID, &dataBytes); err != nil {
 		if err == sql.ErrNoRows {
 			writeJSONErrorResponse(w, http.StatusNotFound, "not_found", "ad_poster not found")
 			return
@@ -854,15 +1176,18 @@ func (h *LegacyHandler) GetAdPosterByID(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Generate revision from data
-	rev := generateRevisionID(dataBytes)
-
-	// Parse and add CouchDB-style fields
 	var doc map[string]interface{}
 	if err := json.Unmarshal(dataBytes, &doc); err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse ad_poster data")
 		return
 	}
+
+	region := extractRegion(doc)
+	canonicalID = strings.TrimSpace(canonicalID)
+	if canonicalID == "" {
+		canonicalID = adPosterID
+	}
+	rev, _ := h.computeRevision(r.Context(), docTypeAdPoster, region, canonicalID, dataBytes)
 
 	doc["_id"] = adPosterID
 	doc["_rev"] = rev
@@ -899,7 +1224,7 @@ func (h *LegacyHandler) GetThemeByID(w http.ResponseWriter, r *http.Request) {
 
 	// Query theme by theme_id from JSONB data
 	query := `SELECT data FROM citypost.theme WHERE data->>'theme_id' = $1 LIMIT 1`
-	
+
 	var dataBytes []byte
 	if err := h.replicaDB.QueryRowContext(r.Context(), query, themeID).Scan(&dataBytes); err != nil {
 		if err == sql.ErrNoRows {
@@ -910,15 +1235,14 @@ func (h *LegacyHandler) GetThemeByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate revision from data
-	rev := generateRevisionID(dataBytes)
-
-	// Parse and add CouchDB-style fields
 	var doc map[string]interface{}
 	if err := json.Unmarshal(dataBytes, &doc); err != nil {
 		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to parse theme data")
 		return
 	}
+
+	region := extractRegion(doc)
+	rev, _ := h.computeRevision(r.Context(), docTypeTheme, region, themeID, dataBytes)
 
 	doc["_id"] = themeID
 	doc["_rev"] = rev
@@ -959,7 +1283,7 @@ func (h *LegacyHandler) GetLoopPosterByID(w http.ResponseWriter, r *http.Request
 			AND (lower(btrim(data->>'loopPosterId')) = lower($1) 
 				OR lower(btrim(data->>'device_code')) = lower($1))
 		LIMIT 1`
-	
+
 	var dataBytes []byte
 	if err := h.replicaDB.QueryRowContext(r.Context(), query, loopPosterID).Scan(&dataBytes); err != nil {
 		if err == sql.ErrNoRows {
@@ -1026,7 +1350,7 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 	// Build query with optional region filter
 	var query string
 	var args []interface{}
-	
+
 	if region != "" {
 		query = `SELECT external_id, data
 			FROM citypost.ad_posters
@@ -1055,7 +1379,7 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 	var totalRows int
 	var countQuery string
 	var countArgs []interface{}
-	
+
 	if region != "" {
 		countQuery = `SELECT COUNT(*) FROM citypost.ad_posters
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
@@ -1066,7 +1390,7 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')`
 		countArgs = []interface{}{}
 	}
-	
+
 	if err := h.replicaDB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&totalRows); err != nil {
 		totalRows = 0
 	}
@@ -1079,6 +1403,7 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 	}
 
 	result := []Row{}
+	var maxSeq int64
 	for rows.Next() {
 		var externalID string
 		var dataBytes []byte
@@ -1086,21 +1411,41 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Generate revision from data
-		rev := generateRevisionID(dataBytes)
+		displayID := externalID
+		var doc map[string]interface{}
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			if idVal, ok := doc["adPosterId"].(string); ok && strings.TrimSpace(idVal) != "" {
+				displayID = strings.TrimSpace(idVal)
+			} else if idVal, ok := doc["id"].(string); ok && strings.TrimSpace(idVal) != "" {
+				displayID = strings.TrimSpace(idVal)
+			}
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.computeRevision(r.Context(), docTypeAdPoster, regionForDoc, externalID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
 
 		row := Row{
-			ID:  externalID,
-			Key: externalID,
+			ID:  displayID,
+			Key: displayID,
 			Value: map[string]string{
 				"rev": rev,
 			},
 		}
 
 		if includeDocs {
-			var doc map[string]interface{}
-			if err := json.Unmarshal(dataBytes, &doc); err == nil {
-				doc["_id"] = externalID
+			if doc == nil {
+				if err := json.Unmarshal(dataBytes, &doc); err != nil {
+					doc = nil
+				}
+			}
+			if doc != nil {
+				doc["_id"] = displayID
 				doc["_rev"] = rev
 				row.Doc = doc
 			}
@@ -1109,10 +1454,20 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 		result = append(result, row)
 	}
 
+	updateSeq := maxSeq
+	if strings.TrimSpace(region) != "" && h.revisions != nil {
+		if seq, err := h.revisions.GetRegionUpdateSeq(r.Context(), docTypeAdPoster, normalizeRegion(region)); err == nil && seq > updateSeq {
+			updateSeq = seq
+		}
+	}
+	if updateSeq == 0 {
+		updateSeq = int64(totalRows)
+	}
+
 	resp := map[string]interface{}{
 		"rows":       result,
 		"total_rows": totalRows,
-		"update_seq": totalRows,
+		"update_seq": updateSeq,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1133,17 +1488,23 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /theme/{device} [get]
 func (h *LegacyHandler) GetLoopByDevice(w http.ResponseWriter, r *http.Request) {
-	if h.replicaDB == nil {
-		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
-		return
-	}
-
 	// Extract device from URL path (e.g., /theme/U696843)
 	device := strings.TrimPrefix(r.URL.Path, "/theme/")
 	device = strings.TrimSpace(device)
 
 	if device == "" {
 		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "device is required")
+		return
+	}
+
+	if strings.HasSuffix(strings.ToLower(device), "-access-token") {
+		if h.tryServePlaceExchangeToken(w, r, device) {
+			return
+		}
+	}
+
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
 		return
 	}
 

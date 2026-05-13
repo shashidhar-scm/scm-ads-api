@@ -2,10 +2,14 @@ package repository
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"strings"
+	"time"
 
 	"scm/internal/models"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UserRoleRepository interface {
@@ -19,21 +23,43 @@ type UserRoleRepository interface {
 }
 
 type userRoleRepository struct {
-	db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewUserRoleRepository(db *sql.DB) UserRoleRepository {
-	return &userRoleRepository{db: db}
+func NewUserRoleRepository(pool *pgxpool.Pool) UserRoleRepository {
+	return &userRoleRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *userRoleRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("user role repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *userRoleRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *userRoleRepository) ReplaceUserRoles(ctx context.Context, userID string, roles []models.UserRoleAssignment) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	tx, err := r.pool.BeginTx(execCtx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback(execCtx)
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM user_roles WHERE user_id = $1`, userID); err != nil {
+	if _, err := tx.Exec(execCtx, `DELETE FROM user_roles WHERE user_id = $1`, userID); err != nil {
 		return err
 	}
 
@@ -42,16 +68,23 @@ func (r *userRoleRepository) ReplaceUserRoles(ctx context.Context, userID string
 		if roleID == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO user_roles (user_id, role_id, advertiser_id) VALUES ($1, $2, NULL) ON CONFLICT DO NOTHING`, userID, roleID); err != nil {
+		if _, err := tx.Exec(execCtx, `INSERT INTO user_roles (user_id, role_id, advertiser_id) VALUES ($1, $2, NULL) ON CONFLICT DO NOTHING`, userID, roleID); err != nil {
 			return err
 		}
 	}
 
-	return tx.Commit()
+	return tx.Commit(execCtx)
 }
 
 func (r *userRoleRepository) ListUserRoleAssignments(ctx context.Context, userID string) ([]models.UserRoleAssignment, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT role_id FROM user_roles WHERE user_id = $1 ORDER BY created_at ASC`, userID)
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, `SELECT role_id FROM user_roles WHERE user_id = $1 ORDER BY created_at ASC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +101,9 @@ func (r *userRoleRepository) ListUserRoleAssignments(ctx context.Context, userID
 }
 
 func (r *userRoleRepository) IsSuperAdmin(ctx context.Context, userID string) (bool, error) {
+	if err := r.ensurePool(); err != nil {
+		return false, err
+	}
 	query := `
 		SELECT EXISTS(
 			SELECT 1
@@ -78,13 +114,18 @@ func (r *userRoleRepository) IsSuperAdmin(ctx context.Context, userID string) (b
 		)
 	`
 	var ok bool
-	if err := r.db.QueryRowContext(ctx, query, userID).Scan(&ok); err != nil {
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+	if err := r.pool.QueryRow(rowCtx, query, userID).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil
 }
 
 func (r *userRoleRepository) IsAdmin(ctx context.Context, userID string) (bool, error) {
+	if err := r.ensurePool(); err != nil {
+		return false, err
+	}
 	query := `
 		SELECT EXISTS(
 			SELECT 1
@@ -95,14 +136,23 @@ func (r *userRoleRepository) IsAdmin(ctx context.Context, userID string) (bool, 
 		)
 	`
 	var ok bool
-	if err := r.db.QueryRowContext(ctx, query, userID).Scan(&ok); err != nil {
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+	if err := r.pool.QueryRow(rowCtx, query, userID).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil
 }
 
 func (r *userRoleRepository) ListScopedAdvertiserIDs(ctx context.Context, userID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, `
 		SELECT DISTINCT advertiser_id
 		FROM user_roles
 		WHERE user_id = $1
@@ -135,6 +185,9 @@ func (r *userRoleRepository) ListScopedAdvertiserIDs(ctx context.Context, userID
 }
 
 func (r *userRoleRepository) HasPermission(ctx context.Context, userID string, permission string, advertiserID *string) (bool, error) {
+	if err := r.ensurePool(); err != nil {
+		return false, err
+	}
 	query := `
 		SELECT EXISTS(
 			SELECT 1
@@ -147,13 +200,18 @@ func (r *userRoleRepository) HasPermission(ctx context.Context, userID string, p
 		)
 	`
 	var ok bool
-	if err := r.db.QueryRowContext(ctx, query, userID, permission).Scan(&ok); err != nil {
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+	if err := r.pool.QueryRow(rowCtx, query, userID, permission).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil
 }
 
 func (r *userRoleRepository) HasPermissionInAnyScope(ctx context.Context, userID string, permission string) (bool, error) {
+	if err := r.ensurePool(); err != nil {
+		return false, err
+	}
 	query := `
 		SELECT EXISTS(
 			SELECT 1
@@ -166,7 +224,9 @@ func (r *userRoleRepository) HasPermissionInAnyScope(ctx context.Context, userID
 		)
 	`
 	var ok bool
-	if err := r.db.QueryRowContext(ctx, query, userID, permission).Scan(&ok); err != nil {
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+	if err := r.pool.QueryRow(rowCtx, query, userID, permission).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil

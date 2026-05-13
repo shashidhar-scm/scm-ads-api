@@ -2,13 +2,16 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"scm/internal/models"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ProjectRepository interface {
@@ -27,14 +30,33 @@ type ProjectFilters struct {
 }
 
 type projectRepository struct {
-	db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewProjectRepository(db *sql.DB) ProjectRepository {
-	return &projectRepository{db: db}
+func NewProjectRepository(pool *pgxpool.Pool) ProjectRepository {
+	return &projectRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *projectRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("project repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *projectRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *projectRepository) Upsert(ctx context.Context, project *models.Project) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	ownerJSON, err := json.Marshal(project.Owner)
 	if err != nil {
 		return fmt.Errorf("marshal owner: %w", err)
@@ -88,7 +110,10 @@ func (r *projectRepository) Upsert(ctx context.Context, project *models.Project)
 	`
 
 	now := time.Now().UTC()
-	_, err = r.db.ExecContext(ctx, query,
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	_, err = r.pool.Exec(execCtx, query,
 		project.ID, ownerJSON, languagesJSON, project.Name, project.Company,
 		project.Description, project.MaxDevices, project.ProfileImg,
 		project.Header, project.SubType, project.Production,
@@ -107,6 +132,10 @@ func (r *projectRepository) Upsert(ctx context.Context, project *models.Project)
 }
 
 func (r *projectRepository) GetByName(ctx context.Context, name string) (*models.Project, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, owner, languages, name, company, description, max_devices,
 			profile_img, header, sub_type, production, city_poster_frequency,
@@ -120,7 +149,10 @@ func (r *projectRepository) GetByName(ctx context.Context, name string) (*models
 
 	var project models.Project
 	var ownerJSON, languagesJSON, regionJSON []byte
-	err := r.db.QueryRowContext(ctx, query, name).Scan(
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(rowCtx, query, name).Scan(
 		&project.ID, &ownerJSON, &languagesJSON, &project.Name, &project.Company,
 		&project.Description, &project.MaxDevices, &project.ProfileImg,
 		&project.Header, &project.SubType, &project.Production,
@@ -133,7 +165,7 @@ func (r *projectRepository) GetByName(ctx context.Context, name string) (*models
 		&project.CreatedAt, &project.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("project not found")
 		}
 		return nil, fmt.Errorf("get project: %w", err)
@@ -153,6 +185,10 @@ func (r *projectRepository) GetByName(ctx context.Context, name string) (*models
 }
 
 func (r *projectRepository) List(ctx context.Context, limit int, offset int) ([]*models.Project, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, owner, languages, name, company, description, max_devices,
 			profile_img, header, sub_type, production, city_poster_frequency,
@@ -164,7 +200,7 @@ func (r *projectRepository) List(ctx context.Context, limit int, offset int) ([]
 		ORDER BY created_at DESC
 	`
 
-	args := []interface{}{}
+	args := []any{}
 	argPos := 1
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argPos)
@@ -176,7 +212,10 @@ func (r *projectRepository) List(ctx context.Context, limit int, offset int) ([]
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
@@ -218,15 +257,25 @@ func (r *projectRepository) List(ctx context.Context, limit int, offset int) ([]
 }
 
 func (r *projectRepository) Count(ctx context.Context) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM projects").Scan(&count)
-	if err != nil {
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	if err := r.pool.QueryRow(rowCtx, "SELECT COUNT(*) FROM projects").Scan(&count); err != nil {
 		return 0, fmt.Errorf("count projects: %w", err)
 	}
 	return count, nil
 }
 
 func (r *projectRepository) ListWithFilters(ctx context.Context, filters ProjectFilters, limit int, offset int) ([]*models.Project, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, owner, languages, name, company, description, max_devices,
 			profile_img, header, sub_type, production, city_poster_frequency,
@@ -268,7 +317,10 @@ func (r *projectRepository) ListWithFilters(ctx context.Context, filters Project
 		argIndex++
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list projects with filters: %w", err)
 	}
@@ -310,6 +362,10 @@ func (r *projectRepository) ListWithFilters(ctx context.Context, filters Project
 }
 
 func (r *projectRepository) CountWithFilters(ctx context.Context, filters ProjectFilters) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := "SELECT COUNT(*) FROM projects p WHERE 1=1"
 	var args []any
 	argIndex := 1
@@ -330,14 +386,20 @@ func (r *projectRepository) CountWithFilters(ctx context.Context, filters Projec
 	}
 
 	var count int
-	err := r.db.QueryRowContext(ctx, query, args...).Scan(&count)
-	if err != nil {
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	if err := r.pool.QueryRow(rowCtx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count projects with filters: %w", err)
 	}
 	return count, nil
 }
 
 func (r *projectRepository) Search(ctx context.Context, term string, limit int, offset int) ([]*models.Project, int, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, 0, err
+	}
+
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
 	countQuery := `
@@ -346,7 +408,9 @@ func (r *projectRepository) Search(ctx context.Context, term string, limit int, 
 		   OR LOWER(COALESCE(description, '')) LIKE $1
 	`
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+	countCtx, cancelCount := r.withTimeout(ctx)
+	defer cancelCount()
+	if err := r.pool.QueryRow(countCtx, countQuery, likeTerm).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count search projects: %w", err)
 	}
 
@@ -364,8 +428,11 @@ func (r *projectRepository) Search(ctx context.Context, term string, limit int, 
 		LIMIT $2 OFFSET $3
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, likeTerm, limit, offset)
-		if err != nil {
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, likeTerm, limit, offset)
+	if err != nil {
 		return nil, 0, fmt.Errorf("search projects: %w", err)
 	}
 	defer rows.Close()

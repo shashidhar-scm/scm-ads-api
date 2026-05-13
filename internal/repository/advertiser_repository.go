@@ -3,25 +3,57 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"scm/internal/interfaces"
 	"scm/internal/models"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type advertiserRepository struct {
-	db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewAdvertiserRepository(db *sql.DB) interfaces.AdvertiserRepository {
-	return &advertiserRepository{db: db}
+func NewAdvertiserRepository(pool *pgxpool.Pool) interfaces.AdvertiserRepository {
+	return &advertiserRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *advertiserRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("advertiser repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *advertiserRepository) translateNoRows(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+func (r *advertiserRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *advertiserRepository) Create(ctx context.Context, advertiser *models.Advertiser) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	query := `
 		INSERT INTO advertisers (name, email, created_by)
 		VALUES ($1, $2, $3)
@@ -30,8 +62,11 @@ func (r *advertiserRepository) Create(ctx context.Context, advertiser *models.Ad
 
 	var createdBy sql.NullString
 
-	err := r.db.QueryRowContext(
-		ctx,
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(
+		execCtx,
 		query,
 		advertiser.Name,
 		advertiser.Email,
@@ -57,15 +92,22 @@ func (r *advertiserRepository) Create(ctx context.Context, advertiser *models.Ad
 }
 
 func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.Advertiser, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
 		WHERE id = $1
 	`
 
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var advertiser models.Advertiser
 	var createdBy sql.NullString
-	err := r.db.QueryRowContext(ctx, query, id).Scan(
+	err := r.pool.QueryRow(rowCtx, query, id).Scan(
 		&advertiser.ID,
 		&advertiser.Name,
 		&advertiser.Email,
@@ -80,7 +122,7 @@ func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.
 	}
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, sql.ErrNoRows
 		}
 		log.Printf("Error getting advertiser: %v", err)
@@ -91,6 +133,10 @@ func (r *advertiserRepository) GetByID(ctx context.Context, id string) (*models.
 }
 
 func (r *advertiserRepository) GetByIDInSet(ctx context.Context, id string, allowedIDs []string) (*models.Advertiser, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
@@ -98,10 +144,12 @@ func (r *advertiserRepository) GetByIDInSet(ctx context.Context, id string, allo
 		  AND id = ANY($2::uuid[])
 	`
 
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var advertiser models.Advertiser
 	var createdBy sql.NullString
-	ids := pq.StringArray(allowedIDs)
-	if err := r.db.QueryRowContext(ctx, query, id, ids).Scan(
+	if err := r.pool.QueryRow(rowCtx, query, id, allowedIDs).Scan(
 		&advertiser.ID,
 		&advertiser.Name,
 		&advertiser.Email,
@@ -120,6 +168,10 @@ func (r *advertiserRepository) GetByIDInSet(ctx context.Context, id string, allo
 }
 
 func (r *advertiserRepository) List(ctx context.Context, limit int, offset int) ([]models.Advertiser, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
@@ -138,7 +190,10 @@ func (r *advertiserRepository) List(ctx context.Context, limit int, offset int) 
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		log.Printf("Error listing advertisers: %v", err)
 		return nil, fmt.Errorf("failed to list advertisers: %w", err)
@@ -177,13 +232,17 @@ func (r *advertiserRepository) List(ctx context.Context, limit int, offset int) 
 }
 
 func (r *advertiserRepository) ListByIDs(ctx context.Context, allowedIDs []string, limit int, offset int) ([]models.Advertiser, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, email, created_by, created_at, updated_at
 		FROM advertisers
 		WHERE id = ANY($1::uuid[])
 		ORDER BY name
 	`
-	args := []any{pq.StringArray(allowedIDs)}
+	args := []any{allowedIDs}
 	argPos := 2
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argPos)
@@ -195,7 +254,10 @@ func (r *advertiserRepository) ListByIDs(ctx context.Context, allowedIDs []strin
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		log.Printf("Error listing scoped advertisers: %v", err)
 		return nil, fmt.Errorf("failed to list advertisers: %w", err)
@@ -232,9 +294,17 @@ func (r *advertiserRepository) ListByIDs(ctx context.Context, allowedIDs []strin
 }
 
 func (r *advertiserRepository) Count(ctx context.Context) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := `SELECT COUNT(*) FROM advertisers`
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, query).Scan(&total); err != nil {
 		log.Printf("Error counting advertisers: %v", err)
 		return 0, fmt.Errorf("failed to count advertisers: %w", err)
 	}
@@ -242,9 +312,17 @@ func (r *advertiserRepository) Count(ctx context.Context) (int, error) {
 }
 
 func (r *advertiserRepository) CountByIDs(ctx context.Context, allowedIDs []string) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := `SELECT COUNT(*) FROM advertisers WHERE id = ANY($1::uuid[])`
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, pq.StringArray(allowedIDs)).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, query, allowedIDs).Scan(&total); err != nil {
 		log.Printf("Error counting advertisers: %v", err)
 		return 0, fmt.Errorf("failed to count advertisers: %w", err)
 	}
@@ -252,6 +330,10 @@ func (r *advertiserRepository) CountByIDs(ctx context.Context, allowedIDs []stri
 }
 
 func (r *advertiserRepository) Search(ctx context.Context, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, 0, err
+	}
+
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
 	countQuery := `
@@ -260,8 +342,12 @@ func (r *advertiserRepository) Search(ctx context.Context, term string, limit in
 		WHERE LOWER(name) LIKE $1
 			OR LOWER(email) LIKE $1
 	`
+
+	countCtx, cancelCount := r.withTimeout(ctx)
+	defer cancelCount()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, likeTerm).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(countCtx, countQuery, likeTerm).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count advertisers: %w", err)
 	}
 
@@ -285,7 +371,10 @@ func (r *advertiserRepository) Search(ctx context.Context, term string, limit in
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search advertisers: %w", err)
 	}
@@ -319,6 +408,10 @@ func (r *advertiserRepository) Search(ctx context.Context, term string, limit in
 }
 
 func (r *advertiserRepository) SearchByIDs(ctx context.Context, allowedIDs []string, term string, limit int, offset int) ([]models.Advertiser, int, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, 0, err
+	}
+
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
 	countQuery := `
@@ -327,8 +420,12 @@ func (r *advertiserRepository) SearchByIDs(ctx context.Context, allowedIDs []str
 		WHERE id = ANY($1::uuid[])
 		  AND (LOWER(name) LIKE $2 OR LOWER(email) LIKE $2)
 	`
+
+	countCtx, cancelCount := r.withTimeout(ctx)
+	defer cancelCount()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, pq.StringArray(allowedIDs), likeTerm).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(countCtx, countQuery, allowedIDs, likeTerm).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count advertisers: %w", err)
 	}
 
@@ -339,7 +436,7 @@ func (r *advertiserRepository) SearchByIDs(ctx context.Context, allowedIDs []str
 		  AND (LOWER(name) LIKE $2 OR LOWER(email) LIKE $2)
 		ORDER BY name
 	`
-	args := []any{pq.StringArray(allowedIDs), likeTerm}
+	args := []any{allowedIDs, likeTerm}
 	argPos := 3
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argPos)
@@ -351,7 +448,10 @@ func (r *advertiserRepository) SearchByIDs(ctx context.Context, allowedIDs []str
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search advertisers: %w", err)
 	}
@@ -383,6 +483,10 @@ func (r *advertiserRepository) SearchByIDs(ctx context.Context, allowedIDs []str
 }
 
 func (r *advertiserRepository) Update(ctx context.Context, id string, req *models.UpdateAdvertiserRequest) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	setValues := []string{}
 	args := []interface{}{}
 	argId := 1
@@ -415,17 +519,16 @@ func (r *advertiserRepository) Update(ctx context.Context, id string, req *model
 		argId,
 	)
 
-	result, err := r.db.ExecContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	result, err := r.pool.Exec(queryCtx, query, args...)
 	if err != nil {
 		log.Printf("Error updating advertiser: %v", err)
 		return fmt.Errorf("failed to update advertiser: %w", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Printf("Error getting rows affected: %v", err)
-		return fmt.Errorf("failed to update advertiser: %w", err)
-	}
+	rowsAffected := result.RowsAffected()
 
 	if rowsAffected == 0 {
 		return fmt.Errorf("advertiser not found")
@@ -435,8 +538,15 @@ func (r *advertiserRepository) Update(ctx context.Context, id string, req *model
 }
 
 func (r *advertiserRepository) Delete(ctx context.Context, id string) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var campaignCount int64
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaigns WHERE advertiser_id = $1`, id).Scan(&campaignCount); err != nil {
+	if err := r.pool.QueryRow(queryCtx, `SELECT COUNT(*) FROM campaigns WHERE advertiser_id = $1`, id).Scan(&campaignCount); err != nil {
 		log.Printf("Error checking advertiser references: %v", err)
 		return fmt.Errorf("failed to delete advertiser: %w", err)
 	}
@@ -451,17 +561,13 @@ func (r *advertiserRepository) Delete(ctx context.Context, id string) error {
 
 	query := `DELETE FROM advertisers WHERE id = $1`
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := r.pool.Exec(queryCtx, query, id)
 	if err != nil {
 		log.Printf("Error deleting advertiser: %v", err)
 		return fmt.Errorf("failed to delete advertiser: %w", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Printf("Error getting rows affected: %v", err)
-		return fmt.Errorf("failed to delete advertiser: %w", err)
-	}
+	rowsAffected := result.RowsAffected()
 
 	if rowsAffected == 0 {
 		return sql.ErrNoRows

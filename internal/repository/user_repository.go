@@ -3,8 +3,12 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"scm/internal/models"
 )
 
@@ -22,39 +26,78 @@ type UserRepository interface {
 }
 
 type userRepository struct {
-	db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewUserRepository(db *sql.DB) UserRepository {
-	return &userRepository{db: db}
+func NewUserRepository(pool *pgxpool.Pool) UserRepository {
+	return &userRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *userRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("user repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *userRepository) translateNoRows(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+func (r *userRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	query := `
 		INSERT INTO users (id, email, name, user_name, phone_number, password_hash, created_at, status)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, COALESCE(NULLIF($8, ''), 'pending'))
 		RETURNING created_at
 	`
 
-	err := r.db.QueryRowContext(ctx, query, user.ID, user.Email, user.Name, user.UserName, user.PhoneNumber, user.PasswordHash, user.CreatedAt, user.Status).Scan(&user.CreatedAt)
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(execCtx, query, user.ID, user.Email, user.Name, user.UserName, user.PhoneNumber, user.PasswordHash, user.CreatedAt, user.Status).Scan(&user.CreatedAt)
 	return err
 }
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at
 		FROM users
 		WHERE id = $1
 	`
 
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var u models.User
 	var name sql.NullString
 	var userName sql.NullString
 	var phoneNumber sql.NullString
 	var lastLoginAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.Status, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
+	err := r.pool.QueryRow(rowCtx, query, id).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.Status, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
@@ -76,20 +119,27 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, 
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at
 		FROM users
 		WHERE email = $1
 	`
 
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var u models.User
 	var name sql.NullString
 	var userName sql.NullString
 	var phoneNumber sql.NullString
 	var lastLoginAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.Status, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
+	err := r.pool.QueryRow(rowCtx, query, email).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.Status, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
@@ -111,6 +161,10 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.
 }
 
 func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string) (*models.User, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, email, name, user_name, phone_number, status, password_hash, last_login_at, created_at
 		FROM users
@@ -120,14 +174,17 @@ func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string)
 		LIMIT 1
 	`
 
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var u models.User
 	var name sql.NullString
 	var userName sql.NullString
 	var phoneNumber sql.NullString
 	var lastLoginAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, identifier).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.Status, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
+	err := r.pool.QueryRow(rowCtx, query, identifier).Scan(&u.ID, &u.Email, &name, &userName, &phoneNumber, &u.Status, &u.PasswordHash, &lastLoginAt, &u.CreatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("user not found")
 		}
 		return nil, err
@@ -149,6 +206,10 @@ func (r *userRepository) GetByIdentifier(ctx context.Context, identifier string)
 }
 
 func (r *userRepository) List(ctx context.Context, limit int, offset int) ([]models.User, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, email, name, user_name, phone_number, status, last_login_at, created_at
 		FROM users
@@ -167,7 +228,10 @@ func (r *userRepository) List(ctx context.Context, limit int, offset int) ([]mod
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -203,22 +267,37 @@ func (r *userRepository) List(ctx context.Context, limit int, offset int) ([]mod
 }
 
 func (r *userRepository) Count(ctx context.Context) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := `SELECT COUNT(*) FROM users`
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, query).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, query).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
 }
 
 func (r *userRepository) ListAll(ctx context.Context) ([]models.User, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, email, name, user_name, phone_number, status, created_at
 		FROM users
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +328,10 @@ func (r *userRepository) ListAll(ctx context.Context) ([]models.User, error) {
 }
 
 func (r *userRepository) UpdateProfile(ctx context.Context, id string, req *models.UpdateUserRequest) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	query := `
 		UPDATE users
 		SET email = COALESCE($1, email),
@@ -260,10 +343,13 @@ func (r *userRepository) UpdateProfile(ctx context.Context, id string, req *mode
 		RETURNING id
 	`
 
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var outID string
-	err := r.db.QueryRowContext(ctx, query, req.Email, req.Name, req.UserName, req.PhoneNumber, req.Status, id).Scan(&outID)
+	err := r.pool.QueryRow(queryCtx, query, req.Email, req.Name, req.UserName, req.PhoneNumber, req.Status, id).Scan(&outID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("user not found")
 		}
 		return err
@@ -272,14 +358,18 @@ func (r *userRepository) UpdateProfile(ctx context.Context, id string, req *mode
 }
 
 func (r *userRepository) Delete(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	res, err := r.pool.Exec(queryCtx, `DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
+	n := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("user not found")
 	}
@@ -287,15 +377,20 @@ func (r *userRepository) Delete(ctx context.Context, id string) error {
 }
 
 func (r *userRepository) UpdatePasswordHash(ctx context.Context, userID string, passwordHash string) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	query := `UPDATE users SET password_hash = $1 WHERE id = $2`
-	res, err := r.db.ExecContext(ctx, query, passwordHash, userID)
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	res, err := r.pool.Exec(queryCtx, query, passwordHash, userID)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
+	n := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("user not found")
 	}

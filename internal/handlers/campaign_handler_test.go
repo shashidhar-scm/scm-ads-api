@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
 	"scm/internal/interfaces"
 	"scm/internal/middleware"
@@ -32,24 +31,14 @@ func (m *mockPopAPI) CampaignImpressions(ctx context.Context, campaignID string)
 }
 
 func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
-
-	h := NewCampaignHandler(&mockCampaignRepo{}, db)
+	userRoles := newStubUserRoleRepo()
+	userRoles.isSuper = true
+	h := NewCampaignHandler(&mockCampaignRepo{}, nil, userRoles)
 	r := chi.NewRouter()
 	r.Get("/campaigns/advertiser/{advertiserID}", h.ListCampaignsByAdvertiser)
 
 	callerID := "user-1"
 	advID := "550e8400-e29b-41d4-a716-446655440000"
-
-	// isGlobalAdmin: IsSuperAdmin=false, IsAdmin=false
-	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(callerID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(callerID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	// ensureAdvertiserOwnedByCaller: true
-	mock.ExpectQuery("SELECT EXISTS\\(").WithArgs(advID, callerID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	// valid UUID
 	req := httptest.NewRequest(http.MethodGet, "/campaigns/advertiser/"+advID, nil)
@@ -75,16 +64,13 @@ func TestListCampaignsByAdvertiserReturnsJSON(t *testing.T) {
 		t.Fatalf("expected campaigns field, got %v", resp)
 	}
 
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
-	}
 }
 
 func TestListCampaignsIncludesLifetimeImpressionsWhenRequested(t *testing.T) {
 	pop := &mockPopAPI{byCampaignID: map[string]*services.CampaignImpressions{
 		"c1": {CampaignID: "c1", Impressions: 123},
 	}}
-	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop, nil)
+	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop, nil, newStubUserRoleRepo())
 	r := chi.NewRouter()
 	r.Get("/campaigns", h.ListCampaigns)
 
@@ -127,7 +113,7 @@ func TestListCampaignsDoesNotIncludeLifetimeImpressionsByDefault(t *testing.T) {
 	pop := &mockPopAPI{byCampaignID: map[string]*services.CampaignImpressions{
 		"c1": {CampaignID: "c1", Impressions: 123},
 	}}
-	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop, nil)
+	h := NewCampaignHandlerWithPop(&mockCampaignRepoWithCampaigns{}, pop, nil, newStubUserRoleRepo())
 	r := chi.NewRouter()
 	r.Get("/campaigns", h.ListCampaigns)
 
@@ -171,7 +157,9 @@ func (m *mockCampaignRepo) GetByID(ctx context.Context, id string) (*models.Camp
 func (m *mockCampaignRepo) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
 	return []*models.Campaign{}, nil
 }
-func (m *mockCampaignRepo) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) { return 0, nil }
+func (m *mockCampaignRepo) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) {
+	return 0, nil
+}
 func (m *mockCampaignRepo) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
 }
@@ -184,8 +172,10 @@ func (m *mockCampaignRepo) ActivateScheduledStartingOn(ctx context.Context, star
 func (m *mockCampaignRepo) CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error) {
 	return 0, nil
 }
-func (m *mockCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
-func (m *mockCampaignRepo) Delete(ctx context.Context, id string) error                         { return nil }
+func (m *mockCampaignRepo) Update(ctx context.Context, id string, campaign *models.Campaign) error {
+	return nil
+}
+func (m *mockCampaignRepo) Delete(ctx context.Context, id string) error { return nil }
 func (m *mockCampaignRepo) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
 	return []*models.Campaign{}, nil
 }
@@ -197,14 +187,18 @@ type mockCampaignRepoWithCampaigns struct{}
 
 var _ interfaces.CampaignRepository = (*mockCampaignRepoWithCampaigns)(nil)
 
-func (m *mockCampaignRepoWithCampaigns) Create(ctx context.Context, campaign *models.Campaign) error { return nil }
+func (m *mockCampaignRepoWithCampaigns) Create(ctx context.Context, campaign *models.Campaign) error {
+	return nil
+}
 func (m *mockCampaignRepoWithCampaigns) GetByID(ctx context.Context, id string) (*models.Campaign, error) {
 	return &models.Campaign{ID: id}, nil
 }
 func (m *mockCampaignRepoWithCampaigns) List(ctx context.Context, filter interfaces.CampaignFilter) ([]*models.Campaign, error) {
 	return []*models.Campaign{{ID: "c1", Name: "n1"}}, nil
 }
-func (m *mockCampaignRepoWithCampaigns) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) { return 1, nil }
+func (m *mockCampaignRepoWithCampaigns) Count(ctx context.Context, filter interfaces.CampaignFilter) (int, error) {
+	return 1, nil
+}
 func (m *mockCampaignRepoWithCampaigns) Summary(ctx context.Context, filter interfaces.CampaignFilter) (*models.CampaignSummary, error) {
 	return &models.CampaignSummary{}, nil
 }
@@ -221,8 +215,10 @@ func (m *mockCampaignRepoWithCampaigns) ActivateScheduledStartingOn(ctx context.
 func (m *mockCampaignRepoWithCampaigns) CompleteActiveEndedBefore(ctx context.Context, now time.Time, activeStatus string, completedStatus string, timeZone string) (int64, error) {
 	return 0, nil
 }
-func (m *mockCampaignRepoWithCampaigns) Update(ctx context.Context, id string, campaign *models.Campaign) error { return nil }
-func (m *mockCampaignRepoWithCampaigns) Delete(ctx context.Context, id string) error                         { return nil }
+func (m *mockCampaignRepoWithCampaigns) Update(ctx context.Context, id string, campaign *models.Campaign) error {
+	return nil
+}
+func (m *mockCampaignRepoWithCampaigns) Delete(ctx context.Context, id string) error { return nil }
 func (m *mockCampaignRepoWithCampaigns) ListByStartDate(ctx context.Context, startDate time.Time) ([]*models.Campaign, error) {
 	return []*models.Campaign{}, nil
 }
@@ -231,7 +227,7 @@ func (m *mockCampaignRepoWithCampaigns) ListByEndDate(ctx context.Context, endDa
 }
 
 func TestGetCampaignNotFoundReturnsJSON(t *testing.T) {
-	h := NewCampaignHandler(&mockCampaignRepo{}, nil)
+	h := NewCampaignHandler(&mockCampaignRepo{}, nil, newStubUserRoleRepo())
 	r := chi.NewRouter()
 	r.Get("/campaigns/{id}", h.GetCampaign)
 

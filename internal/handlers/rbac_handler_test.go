@@ -3,32 +3,53 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
 	"scm/internal/middleware"
+	"scm/internal/models"
 )
 
+type noopPermissionRepo struct{}
+type noopRoleRepo struct{}
+
+func (noopPermissionRepo) Create(context.Context, *models.Permission) error { return nil }
+func (noopPermissionRepo) GetByID(context.Context, string) (*models.Permission, error) {
+	return nil, sql.ErrNoRows
+}
+func (noopPermissionRepo) List(context.Context, int, int) ([]models.Permission, error) {
+	return nil, nil
+}
+func (noopPermissionRepo) Count(context.Context) (int, error) { return 0, nil }
+func (noopPermissionRepo) Update(context.Context, string, *models.UpdatePermissionRequest) error {
+	return nil
+}
+func (noopPermissionRepo) Delete(context.Context, string) error { return nil }
+
+func (noopRoleRepo) Create(context.Context, *models.Role) error { return nil }
+func (noopRoleRepo) GetByID(context.Context, string) (*models.Role, error) {
+	return nil, sql.ErrNoRows
+}
+func (noopRoleRepo) List(context.Context, int, int) ([]models.Role, error) { return nil, nil }
+func (noopRoleRepo) Count(context.Context) (int, error)                    { return 0, nil }
+func (noopRoleRepo) Update(context.Context, string, *models.UpdateRoleRequest) error {
+	return nil
+}
+func (noopRoleRepo) Delete(context.Context, string) error                   { return nil }
+func (noopRoleRepo) SetPermissions(context.Context, string, []string) error { return nil }
+func (noopRoleRepo) ListPermissionIDs(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 func TestSetUserRolesNonSuperAdminCannotChangeRoles(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	userRoles := newStubUserRoleRepo()
+	userRoles.assignments["u1"] = []models.UserRoleAssignment{{RoleID: "role-old"}}
 
-	mock.ExpectQuery(`SELECT EXISTS\(`).
-		WithArgs("caller-1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery(`SELECT role_id FROM user_roles WHERE user_id = \$1`).
-		WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow("role-old"))
-
-	h := NewRBACHandler(db)
+	h := NewRBACHandler(noopRoleRepo{}, noopPermissionRepo{}, userRoles)
 	r := chi.NewRouter()
 	r.Put("/users/{id}/roles", h.SetUserRoles)
 
@@ -43,28 +64,13 @@ func TestSetUserRolesNonSuperAdminCannotChangeRoles(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 got %d (%s)", w.Code, w.Body.String())
 	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
-	}
 }
 
 func TestSetUserRolesNonSuperAdminNoOpAllowed(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New: %v", err)
-	}
-	defer db.Close()
+	userRoles := newStubUserRoleRepo()
+	userRoles.assignments["u1"] = []models.UserRoleAssignment{{RoleID: "role-same"}}
 
-	mock.ExpectQuery(`SELECT EXISTS\(`).
-		WithArgs("caller-1").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	mock.ExpectQuery(`SELECT role_id FROM user_roles WHERE user_id = \$1`).
-		WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow("role-same"))
-
-	h := NewRBACHandler(db)
+	h := NewRBACHandler(noopRoleRepo{}, noopPermissionRepo{}, userRoles)
 	r := chi.NewRouter()
 	r.Put("/users/{id}/roles", h.SetUserRoles)
 
@@ -78,9 +84,5 @@ func TestSetUserRolesNonSuperAdminNoOpAllowed(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d (%s)", w.Code, w.Body.String())
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectations: %v", err)
 	}
 }

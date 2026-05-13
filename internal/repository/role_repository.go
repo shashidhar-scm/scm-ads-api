@@ -3,11 +3,15 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"scm/internal/models"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RoleRepository interface {
@@ -22,14 +26,43 @@ type RoleRepository interface {
 }
 
 type roleRepository struct {
-	db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewRoleRepository(db *sql.DB) RoleRepository {
-	return &roleRepository{db: db}
+func NewRoleRepository(pool *pgxpool.Pool) RoleRepository {
+	return &roleRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *roleRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("role repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *roleRepository) translateNoRows(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+func (r *roleRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *roleRepository) Create(ctx context.Context, role *models.Role) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	query := `
 		INSERT INTO roles (id, name, description, is_system, created_at)
 		VALUES ($1, $2, $3, FALSE, $4)
@@ -41,18 +74,28 @@ func (r *roleRepository) Create(ctx context.Context, role *models.Role) error {
 	if role.CreatedAt.IsZero() {
 		role.CreatedAt = time.Now().UTC()
 	}
-	return r.db.QueryRowContext(ctx, query, role.ID, role.Name, role.Description, role.CreatedAt).Scan(&role.CreatedAt)
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	return r.pool.QueryRow(execCtx, query, role.ID, role.Name, role.Description, role.CreatedAt).Scan(&role.CreatedAt)
 }
 
 func (r *roleRepository) GetByID(ctx context.Context, id string) (*models.Role, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, COALESCE(description, ''), is_system, created_at
 		FROM roles
 		WHERE id = $1
 	`
 	var out models.Role
-	if err := r.db.QueryRowContext(ctx, query, id).Scan(&out.ID, &out.Name, &out.Description, &out.IsSystem, &out.CreatedAt); err != nil {
-		return nil, err
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	if err := r.pool.QueryRow(rowCtx, query, id).Scan(&out.ID, &out.Name, &out.Description, &out.IsSystem, &out.CreatedAt); err != nil {
+		return nil, r.translateNoRows(err)
 	}
 	if strings.TrimSpace(out.Description) == "" {
 		out.Description = ""
@@ -61,6 +104,10 @@ func (r *roleRepository) GetByID(ctx context.Context, id string) (*models.Role, 
 }
 
 func (r *roleRepository) List(ctx context.Context, limit int, offset int) ([]models.Role, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, COALESCE(description, ''), is_system, created_at
 		FROM roles
@@ -77,7 +124,10 @@ func (r *roleRepository) List(ctx context.Context, limit int, offset int) ([]mod
 		query += fmt.Sprintf(" OFFSET $%d", argPos)
 		args = append(args, offset)
 	}
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,14 +147,25 @@ func (r *roleRepository) List(ctx context.Context, limit int, offset int) ([]mod
 }
 
 func (r *roleRepository) Count(ctx context.Context) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM roles`).Scan(&total); err != nil {
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	if err := r.pool.QueryRow(queryCtx, `SELECT COUNT(*) FROM roles`).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
 }
 
 func (r *roleRepository) Update(ctx context.Context, id string, req *models.UpdateRoleRequest) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	set := []string{}
 	args := []any{}
 	argPos := 1
@@ -123,23 +184,40 @@ func (r *roleRepository) Update(ctx context.Context, id string, req *models.Upda
 	}
 	args = append(args, id)
 	query := fmt.Sprintf("UPDATE roles SET %s WHERE id = $%d", strings.Join(set, ", "), argPos)
-	_, err := r.db.ExecContext(ctx, query, args...)
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	_, err := r.pool.Exec(execCtx, query, args...)
 	return err
 }
 
 func (r *roleRepository) Delete(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM roles WHERE id = $1`, id)
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	_, err := r.pool.Exec(execCtx, `DELETE FROM roles WHERE id = $1`, id)
 	return err
 }
 
 func (r *roleRepository) SetPermissions(ctx context.Context, roleID string, permissionIDs []string) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	tx, err := r.pool.BeginTx(execCtx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback(execCtx)
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id = $1`, roleID); err != nil {
+	if _, err := tx.Exec(execCtx, `DELETE FROM role_permissions WHERE role_id = $1`, roleID); err != nil {
 		return err
 	}
 
@@ -148,16 +226,26 @@ func (r *roleRepository) SetPermissions(ctx context.Context, roleID string, perm
 		if pid == "" {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, roleID, pid); err != nil {
+		if _, err := tx.Exec(execCtx, `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, roleID, pid); err != nil {
 			return err
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(execCtx); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *roleRepository) ListPermissionIDs(ctx context.Context, roleID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT permission_id FROM role_permissions WHERE role_id = $1 ORDER BY permission_id`, roleID)
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, `SELECT permission_id FROM role_permissions WHERE role_id = $1 ORDER BY permission_id`, roleID)
 	if err != nil {
 		return nil, err
 	}

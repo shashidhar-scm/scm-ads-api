@@ -4,12 +4,13 @@ import (
 	"database/sql"
 
 	"scm/internal/handlers"
+	"scm/internal/repository"
 
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterLegacyRoutes(r chi.Router, db *sql.DB, replicatorDB *sql.DB) {
-	h := handlers.NewLegacyHandler(db, replicatorDB)
+func RegisterLegacyRoutes(r chi.Router, db *sql.DB, replicatorDB *sql.DB, creativeRepo repository.CreativeRepository, placeExchangeRepo repository.PlaceExchangeTokenRepository, revisionRepo repository.LegacyRevisionRepository) {
+	h := handlers.NewLegacyHandler(db, replicatorDB, creativeRepo, placeExchangeRepo, revisionRepo)
 
 	// CouchDB-style individual document endpoints
 	r.Get("/posters/{id}", h.GetPosterByID)
@@ -20,6 +21,7 @@ func RegisterLegacyRoutes(r chi.Router, db *sql.DB, replicatorDB *sql.DB) {
 	// CouchDB-style _all_docs endpoints
 	r.Get("/posters/_all_docs", h.GetAllPosters)
 	r.Get("/adposters/_all_docs", h.GetAllAdPosters)
+	r.Get("/themes/_all_docs", h.GetAllThemes)
 
 	// RESTful endpoint for loop data by device
 	r.Get("/theme/*", h.GetLoopByDevice)

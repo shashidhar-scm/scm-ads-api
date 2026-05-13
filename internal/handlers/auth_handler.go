@@ -112,13 +112,13 @@ func validationMessage(err error) string {
 }
 
 type AuthHandler struct {
-	users  repository.UserRepository
-	resets repository.PasswordResetRepository
-	userRoles repository.UserRoleRepository
-	mailer services.EmailSender
-	db     *sql.DB
-	cfg    *config.Config
-	v      *validator.Validate
+	users        repository.UserRepository
+	resets       repository.PasswordResetRepository
+	userRoles    repository.UserRoleRepository
+	mailer       services.EmailSender
+	db           *sql.DB
+	cfg          *config.Config
+	v            *validator.Validate
 	googleVerify func(ctx context.Context, idToken string) (googleTokenClaims, error)
 	tempPassword func() (string, error)
 }
@@ -128,17 +128,17 @@ type googleTokenClaims struct {
 	Name  string
 }
 
-func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender) *AuthHandler {
+func NewAuthHandler(db *sql.DB, cfg *config.Config, mailer services.EmailSender, userRepo repository.UserRepository, userRoleRepo repository.UserRoleRepository) *AuthHandler {
 	v := validator.New()
 	_ = v.RegisterValidation("strongpassword", strongPassword)
 	return &AuthHandler{
-		users:  repository.NewUserRepository(db),
-		resets: repository.NewPasswordResetRepository(db),
-		userRoles: repository.NewUserRoleRepository(db),
-		mailer: mailer,
-		db:     db,
-		cfg:    cfg,
-		v:      v,
+		users:     userRepo,
+		resets:    repository.NewPasswordResetRepository(db),
+		userRoles: userRoleRepo,
+		mailer:    mailer,
+		db:        db,
+		cfg:       cfg,
+		v:         v,
 		googleVerify: func(ctx context.Context, idToken string) (googleTokenClaims, error) {
 			return verifyGoogleIDTokenWithTokenInfo(ctx, strings.TrimSpace(cfg.GoogleClientID), idToken)
 		},

@@ -3,12 +3,14 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"scm/internal/models"
 )
 
@@ -28,85 +30,123 @@ type CreativeRepository interface {
 }
 
 type creativeRepository struct {
-    db *sql.DB
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewCreativeRepository(db *sql.DB) CreativeRepository {
-    return &creativeRepository{db: db}
+func NewCreativeRepository(pool *pgxpool.Pool) CreativeRepository {
+	return &creativeRepository{pool: pool, queryTimeout: 5 * time.Second}
+}
+
+func (r *creativeRepository) ensurePool() error {
+	if r.pool == nil {
+		return errors.New("creative repository: pgx pool is nil")
+	}
+	return nil
+}
+
+func (r *creativeRepository) translateNoRows(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+func (r *creativeRepository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.queryTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
 }
 
 func (r *creativeRepository) Create(ctx context.Context, creative *models.Creative) error {
-    query := `
-        INSERT INTO creatives (
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	query := `
+		INSERT INTO creatives (
 			id, name, type, url, file_path, size, impression_count, impressions_served, play_weight, campaign_id, selected_days, time_slots, devices, uploaded_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        RETURNING uploaded_at
-    `
+		RETURNING uploaded_at
+	`
 
-    err := r.db.QueryRowContext(
-        ctx,
-        query,
-        creative.ID,
-        creative.Name,
-        creative.Type,
-        creative.URL,
-        creative.FilePath,
-        creative.Size,
-        creative.ImpressionCount,
-        creative.ImpressionsServed,
+	execCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	err := r.pool.QueryRow(execCtx,
+		query,
+		creative.ID,
+		creative.Name,
+		creative.Type,
+		creative.URL,
+		creative.FilePath,
+		creative.Size,
+		creative.ImpressionCount,
+		creative.ImpressionsServed,
 		creative.PlayWeight,
-        creative.CampaignID,
-        pq.Array(creative.SelectedDays),
-        pq.Array(creative.TimeSlots),
-        pq.Array(creative.Devices),
-        creative.UploadedAt,
-    ).Scan(&creative.UploadedAt)
-    
-    return err
+		creative.CampaignID,
+		creative.SelectedDays,
+		creative.TimeSlots,
+		creative.Devices,
+		creative.UploadedAt,
+	).Scan(&creative.UploadedAt)
+
+	return err
 }
 
 func (r *creativeRepository) GetByID(ctx context.Context, id string) (*models.Creative, error) {
-    query := `
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
+	query := `
 		SELECT id, name, type, url, file_path, size, impression_count, impressions_served, play_weight, campaign_id, selected_days, time_slots, devices, uploaded_at
-        FROM creatives
-        WHERE id = $1
-    `
-    
-    var creative models.Creative
-    var impressionCount sql.NullInt64
-    err := r.db.QueryRowContext(ctx, query, id).Scan(
-        &creative.ID,
-        &creative.Name,
-        &creative.Type,
-        &creative.URL,
-        &creative.FilePath,
-        &creative.Size,
-        &impressionCount,
-        &creative.ImpressionsServed,
+		FROM creatives
+		WHERE id = $1
+	`
+
+	rowCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	var creative models.Creative
+	var impressionCount sql.NullInt64
+	err := r.pool.QueryRow(rowCtx, query, id).Scan(
+		&creative.ID,
+		&creative.Name,
+		&creative.Type,
+		&creative.URL,
+		&creative.FilePath,
+		&creative.Size,
+		&impressionCount,
+		&creative.ImpressionsServed,
 		&creative.PlayWeight,
-        &creative.CampaignID,
-        pq.Array(&creative.SelectedDays),
-        pq.Array(&creative.TimeSlots),
-        pq.Array(&creative.Devices),
-        &creative.UploadedAt,
-    )
-    
-    if err != nil {
-        if err == sql.ErrNoRows {
-            return nil, sql.ErrNoRows
-        }
-        return nil, err
-    }
-    
-    if impressionCount.Valid {
-        v := impressionCount.Int64
-        creative.ImpressionCount = &v
-    }
-    return &creative, nil
+		&creative.CampaignID,
+		&creative.SelectedDays,
+		&creative.TimeSlots,
+		&creative.Devices,
+		&creative.UploadedAt,
+	)
+
+	if err != nil {
+		return nil, r.translateNoRows(err)
+	}
+
+	if impressionCount.Valid {
+		v := impressionCount.Int64
+		creative.ImpressionCount = &v
+	}
+	return &creative, nil
 }
 
-
 func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int, createdByUserID *string) ([]*models.Creative, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT
 			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.play_weight,
@@ -136,45 +176,52 @@ func (r *creativeRepository) ListAll(ctx context.Context, limit int, offset int,
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-    var creatives []*models.Creative
-    for rows.Next() {
-        var creative models.Creative
-        var impressionCount sql.NullInt64
-        if err := rows.Scan(
-            &creative.ID,
-            &creative.Name,
-            &creative.Type,
-            &creative.URL,
-            &creative.FilePath,
-            &creative.Size,
-            &impressionCount,
-            &creative.ImpressionsServed,
+	var creatives []*models.Creative
+	for rows.Next() {
+		var creative models.Creative
+		var impressionCount sql.NullInt64
+		if err := rows.Scan(
+			&creative.ID,
+			&creative.Name,
+			&creative.Type,
+			&creative.URL,
+			&creative.FilePath,
+			&creative.Size,
+			&impressionCount,
+			&creative.ImpressionsServed,
 			&creative.PlayWeight,
-            &creative.CampaignID,
-            pq.Array(&creative.SelectedDays),
-            pq.Array(&creative.TimeSlots),
-            pq.Array(&creative.Devices),
-            &creative.UploadedAt,
-        ); err != nil {
-            return nil, err
-        }
-        if impressionCount.Valid {
-            v := impressionCount.Int64
-            creative.ImpressionCount = &v
-        }
-        creatives = append(creatives, &creative)
-    }
+			&creative.CampaignID,
+			&creative.SelectedDays,
+			&creative.TimeSlots,
+			&creative.Devices,
+			&creative.UploadedAt,
+		); err != nil {
+			return nil, err
+		}
+		if impressionCount.Valid {
+			v := impressionCount.Int64
+			creative.ImpressionCount = &v
+		}
+		creatives = append(creatives, &creative)
+	}
 
-    	return creatives, rows.Err()
+	return creatives, rows.Err()
 }
 
 func (r *creativeRepository) CountAll(ctx context.Context, createdByUserID *string) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := `
 		SELECT COUNT(*)
 		FROM creatives cr
@@ -187,14 +234,22 @@ func (r *creativeRepository) CountAll(ctx context.Context, createdByUserID *stri
 		query += " AND a.created_by = $1"
 		args = append(args, strings.TrimSpace(*createdByUserID))
 	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, query, args...).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
 }
 
 func (r *creativeRepository) Search(ctx context.Context, term string, limit int, offset int, createdByUserID *string) ([]*models.Creative, int, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, 0, err
+	}
+
 	likeTerm := fmt.Sprintf("%%%s%%", strings.ToLower(term))
 
 	countQuery := `
@@ -215,8 +270,12 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 		countQuery += " AND a.created_by = $2"
 		args = append(args, strings.TrimSpace(*createdByUserID))
 	}
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("search creatives count: %w", err)
 	}
 
@@ -244,7 +303,7 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(qArgs)+1, len(qArgs)+2)
 	qArgs = append(qArgs, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, query, qArgs...)
+	rows, err := r.pool.Query(queryCtx, query, qArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("search creatives: %w", err)
 	}
@@ -265,9 +324,9 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 			&creative.ImpressionsServed,
 			&creative.PlayWeight,
 			&creative.CampaignID,
-			pq.Array(&creative.SelectedDays),
-			pq.Array(&creative.TimeSlots),
-			pq.Array(&creative.Devices),
+			&creative.SelectedDays,
+			&creative.TimeSlots,
+			&creative.Devices,
 			&creative.UploadedAt,
 		); err != nil {
 			return nil, 0, err
@@ -287,6 +346,10 @@ func (r *creativeRepository) Search(ctx context.Context, term string, limit int,
 }
 
 func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID string, limit int, offset int) ([]*models.Creative, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT
 			id, name, type, url, file_path, size, impression_count, impressions_served, play_weight, campaign_id, selected_days, time_slots, devices, uploaded_at
@@ -308,54 +371,69 @@ func (r *creativeRepository) ListByCampaign(ctx context.Context, campaignID stri
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	    
-    var creatives []*models.Creative
-    for rows.Next() {
-        var creative models.Creative
-        var impressionCount sql.NullInt64
-        if err := rows.Scan(
-            &creative.ID,
-            &creative.Name,
-            &creative.Type,
-            &creative.URL,
-            &creative.FilePath,
-            &creative.Size,
-            &impressionCount,
-            &creative.ImpressionsServed,
-            &creative.PlayWeight,
-            &creative.CampaignID,
-            pq.Array(&creative.SelectedDays),
-            pq.Array(&creative.TimeSlots),
-            pq.Array(&creative.Devices),
-            &creative.UploadedAt,
-        ); err != nil {
-            return nil, err
-        }
-        if impressionCount.Valid {
-            v := impressionCount.Int64
-            creative.ImpressionCount = &v
-        }
-        creatives = append(creatives, &creative)
-    }
-    
-    	return creatives, rows.Err()
+
+	var creatives []*models.Creative
+	for rows.Next() {
+		var creative models.Creative
+		var impressionCount sql.NullInt64
+		if err := rows.Scan(
+			&creative.ID,
+			&creative.Name,
+			&creative.Type,
+			&creative.URL,
+			&creative.FilePath,
+			&creative.Size,
+			&impressionCount,
+			&creative.ImpressionsServed,
+			&creative.PlayWeight,
+			&creative.CampaignID,
+			&creative.SelectedDays,
+			&creative.TimeSlots,
+			&creative.Devices,
+			&creative.UploadedAt,
+		); err != nil {
+			return nil, err
+		}
+		if impressionCount.Valid {
+			v := impressionCount.Int64
+			creative.ImpressionCount = &v
+		}
+		creatives = append(creatives, &creative)
+	}
+
+	return creatives, rows.Err()
 }
 
 func (r *creativeRepository) CountByCampaign(ctx context.Context, campaignID string) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := `SELECT COUNT(*) FROM creatives WHERE campaign_id = $1`
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, campaignID).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, query, campaignID).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
 }
 
 func (r *creativeRepository) ListByDevice(ctx context.Context, device string, activeNow bool, now time.Time, limit int, offset int) ([]*models.Creative, error) {
+	if err := r.ensurePool(); err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT
 			cr.id, cr.name, cr.type, cr.url, cr.file_path, cr.size, cr.impression_count, cr.impressions_served, cr.play_weight, cr.campaign_id, cr.selected_days, cr.time_slots, cr.devices, cr.uploaded_at
@@ -423,7 +501,10 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 		args = append(args, offset)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	rows, err := r.pool.Query(queryCtx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -444,9 +525,9 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 			&creative.ImpressionsServed,
 			&creative.PlayWeight,
 			&creative.CampaignID,
-			pq.Array(&creative.SelectedDays),
-			pq.Array(&creative.TimeSlots),
-			pq.Array(&creative.Devices),
+			&creative.SelectedDays,
+			&creative.TimeSlots,
+			&creative.Devices,
 			&creative.UploadedAt,
 		); err != nil {
 			return nil, err
@@ -466,6 +547,10 @@ func (r *creativeRepository) ListByDevice(ctx context.Context, device string, ac
 }
 
 func (r *creativeRepository) CountByDevice(ctx context.Context, device string, activeNow bool, now time.Time) (int, error) {
+	if err := r.ensurePool(); err != nil {
+		return 0, err
+	}
+
 	query := `
 		SELECT COUNT(*)
 		FROM creatives cr
@@ -513,14 +598,21 @@ func (r *creativeRepository) CountByDevice(ctx context.Context, device string, a
 		args = append(args, day, tm, tm)
 	}
 
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(queryCtx, query, args...).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
 }
 
 func (r *creativeRepository) Update(ctx context.Context, id string, req *models.UpdateCreativeRequest) error {
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
 	query := `
 		UPDATE creatives
 		SET name = COALESCE($1, name),
@@ -539,19 +631,22 @@ func (r *creativeRepository) Update(ctx context.Context, id string, req *models.
 
 	var selectedDays any
 	if req.SelectedDays != nil {
-		selectedDays = pq.Array(*req.SelectedDays)
+		selectedDays = *req.SelectedDays
 	}
 	var timeSlots any
 	if req.TimeSlots != nil {
-		timeSlots = pq.Array(*req.TimeSlots)
+		timeSlots = *req.TimeSlots
 	}
 	var devices any
 	if req.Devices != nil {
-		devices = pq.Array(*req.Devices)
+		devices = *req.Devices
 	}
 
-	if err := r.db.QueryRowContext(
-		ctx,
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	if err := r.pool.QueryRow(
+		queryCtx,
 		query,
 		req.Name,
 		req.Type,
@@ -576,6 +671,10 @@ type rotationDailyRow struct {
 }
 
 func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, device string, campaignID string, candidateCreativeIDs []string) (string, error) {
+	if err := r.ensurePool(); err != nil {
+		return "", err
+	}
+
 	device = strings.TrimSpace(device)
 	campaignID = strings.TrimSpace(campaignID)
 	if device == "" || campaignID == "" {
@@ -606,22 +705,22 @@ func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, dev
 	// Preserve the given order (order matters), but keep stable behavior when DB returns last_id not in list.
 	// (No sorting here.)
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback(ctx)
 
 	day := time.Now().UTC().Truncate(24 * time.Hour)
 	dayStr := day.Format("2006-01-02")
 
 	// Load weights for candidates.
 	weights := make(map[string]int, len(unique))
-	rowsW, err := tx.QueryContext(ctx, `
+	rowsW, err := tx.Query(ctx, `
 		SELECT id::text, COALESCE(play_weight, 0)
 		FROM creatives
 		WHERE id = ANY($1::uuid[])
-	`, pq.Array(unique))
+	`, unique)
 	if err != nil {
 		return "", err
 	}
@@ -661,7 +760,7 @@ func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, dev
 	}
 
 	served := make(map[string]int, len(unique))
-	rowsS, err := tx.QueryContext(ctx, `
+	rowsS, err := tx.Query(ctx, `
 		SELECT creative_id::text, served_count
 		FROM creative_rotation_state_daily
 		WHERE device = $1 AND campaign_id = $2 AND day = $3::date
@@ -706,7 +805,7 @@ func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, dev
 		}
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO creative_rotation_state_daily (device, campaign_id, day, creative_id, served_count, updated_at)
 		VALUES ($1, $2, $3::date, $4, 1, NOW() AT TIME ZONE 'UTC')
 		ON CONFLICT (device, campaign_id, day, creative_id)
@@ -716,7 +815,7 @@ func (r *creativeRepository) PickNextRotationalCreative(ctx context.Context, dev
 		return "", err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 	return chosen, nil
@@ -735,20 +834,24 @@ func equalStringSlices(a []string, b []string) bool {
 }
 
 func (r *creativeRepository) Delete(ctx context.Context, id string) error {
-    query := `DELETE FROM creatives WHERE id = $1`
-    result, err := r.db.ExecContext(ctx, query, id)
-    if err != nil {
-        return err
-    }
-    
-    rowsAffected, err := result.RowsAffected()
-    if err != nil {
-        return err
-    }
-    
-    if rowsAffected == 0 {
-        return sql.ErrNoRows
-    }
-    
-    return nil
+	if err := r.ensurePool(); err != nil {
+		return err
+	}
+
+	query := `DELETE FROM creatives WHERE id = $1`
+
+	queryCtx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	result, err := r.pool.Exec(queryCtx, query, id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
 }

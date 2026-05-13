@@ -10,9 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func RegisterSyncRoutes(r chi.Router, db *sql.DB, client *services.CityPostConsoleClient) {
-	projectRepo := repository.NewProjectRepository(db)
-	deviceRepo := repository.NewDeviceRepository(db)
+func RegisterSyncRoutes(r chi.Router, db *sql.DB, client *services.CityPostConsoleClient, projectRepo repository.ProjectRepository, deviceRepo repository.DeviceRepository) {
 	syncHandler := handlers.NewSyncHandler(projectRepo, deviceRepo, client)
 
 	r.Post("/sync/console", syncHandler.SyncConsole)

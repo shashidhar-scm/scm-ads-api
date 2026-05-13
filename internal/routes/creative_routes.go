@@ -8,14 +8,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"scm/internal/config"
 	"scm/internal/handlers"
+	"scm/internal/interfaces"
 	authmw "scm/internal/middleware"
 	"scm/internal/repository"
 )
 
-func RegisterPublicCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config, cfg *config.Config) error {
-	creativeRepo := repository.NewCreativeRepository(db)
-	campaignRepo := repository.NewCampaignRepository(db)
-	creativeHandler, err := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db, cfg)
+func RegisterPublicCreativeRoutes(router chi.Router, s3Config *config.S3Config, campaignRepo interfaces.CampaignRepository, creativeRepo repository.CreativeRepository, cfg *config.Config) error {
+	creativeHandler, err := handlers.NewCreativeHandler(creativeRepo, campaignRepo, nil, s3Config, nil, cfg)
 	if err != nil {
 		return fmt.Errorf("new creative handler: %w", err)
 	}
@@ -24,24 +23,24 @@ func RegisterPublicCreativeRoutes(router chi.Router, db *sql.DB, s3Config *confi
 	return nil
 }
 
-func RegisterCreativeRoutes(router chi.Router, db *sql.DB, s3Config *config.S3Config, cfg *config.Config) error {
-	creativeRepo := repository.NewCreativeRepository(db)
-	campaignRepo := repository.NewCampaignRepository(db)
-	creativeHandler, err := handlers.NewCreativeHandler(creativeRepo, campaignRepo, s3Config, db, cfg)
+func RegisterCreativeRoutes(router chi.Router, db *sql.DB, userRoleRepo repository.UserRoleRepository, s3Config *config.S3Config, campaignRepo interfaces.CampaignRepository, creativeRepo repository.CreativeRepository, cfg *config.Config) error {
+	creativeHandler, err := handlers.NewCreativeHandler(creativeRepo, campaignRepo, userRoleRepo, s3Config, db, cfg)
 	if err != nil {
 		return fmt.Errorf("new creative handler: %w", err)
 	}
 
 	router.Route("/creatives", func(r chi.Router) {
-		r.With(authmw.RequirePermission(db, "creatives.read")).Get("/search", creativeHandler.SearchCreatives)
-		r.With(authmw.RequirePermission(db, "creatives.read")).Get("/", creativeHandler.ListCreatives)
-		r.With(authmw.RequirePermission(db, "creatives.read")).Post("/suggestions", creativeHandler.SuggestVenues)
-		r.With(authmw.RequirePermission(db, "creatives.write")).Post("/upload", creativeHandler.UploadCreative)
-		r.With(authmw.RequirePermission(db, "creatives.read")).Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)
+		readPerm := authmw.RequirePermission(userRoleRepo, "creatives.read")
+		writePerm := authmw.RequirePermission(userRoleRepo, "creatives.write")
+		r.With(readPerm).Get("/search", creativeHandler.SearchCreatives)
+		r.With(readPerm).Get("/", creativeHandler.ListCreatives)
+		r.With(readPerm).Post("/suggestions", creativeHandler.SuggestVenues)
+		r.With(writePerm).Post("/upload", creativeHandler.UploadCreative)
+		r.With(readPerm).Get("/campaign/{campaignID}", creativeHandler.ListCreativesByCampaign)
 		r.Route("/{id}", func(r chi.Router) {
-			r.With(authmw.RequirePermission(db, "creatives.read")).Get("/", creativeHandler.GetCreative)
-			r.With(authmw.RequirePermission(db, "creatives.write")).Put("/", creativeHandler.UpdateCreative)
-			r.With(authmw.RequirePermission(db, "creatives.write")).Delete("/", creativeHandler.DeleteCreative)
+			r.With(readPerm).Get("/", creativeHandler.GetCreative)
+			r.With(writePerm).Put("/", creativeHandler.UpdateCreative)
+			r.With(writePerm).Delete("/", creativeHandler.DeleteCreative)
 		})
 	})
 	return nil

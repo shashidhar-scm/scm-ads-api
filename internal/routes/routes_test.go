@@ -27,7 +27,7 @@ func TestRootReturnsJSON(t *testing.T) {
 	}
 	defer db.Close()
 
-	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{}, &noopCampaignRepo{}, &noopCreativeRepo{}, &noopUserRepo{}, &noopAdvertiserRepo{}, &noopDeviceRepo{}, &noopProjectRepo{}, &noopRoleRepo{}, &noopPermissionRepo{}, &noopUserRoleRepo{}, &noopPlaceExchangeTokenRepo{}, &noopLegacyRevisionRepo{})
 	if err != nil {
 		t.Fatalf("SetupRoutes: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestHealthDBOK(t *testing.T) {
 
 	mock.ExpectPing()
 
-	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{}, &noopCampaignRepo{}, &noopCreativeRepo{}, &noopUserRepo{}, &noopAdvertiserRepo{}, &noopDeviceRepo{}, &noopProjectRepo{}, &noopRoleRepo{}, &noopPermissionRepo{}, &noopUserRoleRepo{}, &noopPlaceExchangeTokenRepo{}, &noopLegacyRevisionRepo{})
 	if err != nil {
 		t.Fatalf("SetupRoutes: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestHealthDBDown(t *testing.T) {
 
 	mock.ExpectPing().WillReturnError(sql.ErrConnDone)
 
-	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{})
+	r, err := SetupRoutes(db, nil, &config.Config{JWTSecret: "dev"}, &config.S3Config{}, &noopCampaignRepo{}, &noopCreativeRepo{}, &noopUserRepo{}, &noopAdvertiserRepo{}, &noopDeviceRepo{}, &noopProjectRepo{}, &noopRoleRepo{}, &noopPermissionRepo{}, &noopUserRoleRepo{}, &noopPlaceExchangeTokenRepo{}, &noopLegacyRevisionRepo{})
 	if err != nil {
 		t.Fatalf("SetupRoutes: %v", err)
 	}

@@ -37,6 +37,7 @@ import (
 type CreativeHandler struct {
 	repo              repository.CreativeRepository
 	campaignRepo      interfaces.CampaignRepository
+	userRoles         repository.UserRoleRepository
 	s3Client          *s3.Client
 	rekognitionClient *rekognition.Client
 	validator         *validator.Validate
@@ -54,7 +55,7 @@ type CreativeHandler struct {
 	venuesCache        []*models.Venue
 }
 
-func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, s3Config *config.S3Config, db *sql.DB, cfg *config.Config) (*CreativeHandler, error) {
+func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfaces.CampaignRepository, userRoles repository.UserRoleRepository, s3Config *config.S3Config, db *sql.DB, cfg *config.Config) (*CreativeHandler, error) {
 	if cfg == nil {
 		loadedCfg, err := config.Load()
 		if err != nil {
@@ -66,6 +67,7 @@ func NewCreativeHandler(repo repository.CreativeRepository, campaignRepo interfa
 	return &CreativeHandler{
 		repo:                 repo,
 		campaignRepo:         campaignRepo,
+		userRoles:            userRoles,
 		s3Client:             s3Config.Client,
 		bucket:               s3Config.Bucket,
 		publicBaseURL:        s3Config.PublicBaseURL,
@@ -108,15 +110,14 @@ func (h *CreativeHandler) getVenuesCached(ctx context.Context) ([]*models.Venue,
 }
 
 func (h *CreativeHandler) isGlobalAdmin(ctx context.Context, userID string) (bool, error) {
-	if h.db == nil || strings.TrimSpace(userID) == "" {
+	if h.userRoles == nil || strings.TrimSpace(userID) == "" {
 		return false, nil
 	}
-	ur := repository.NewUserRoleRepository(h.db)
-	isSuper, err := ur.IsSuperAdmin(ctx, userID)
+	isSuper, err := h.userRoles.IsSuperAdmin(ctx, userID)
 	if err != nil {
 		return false, err
 	}
-	isAdmin, err := ur.IsAdmin(ctx, userID)
+	isAdmin, err := h.userRoles.IsAdmin(ctx, userID)
 	if err != nil {
 		return false, err
 	}
