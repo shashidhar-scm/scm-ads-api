@@ -27,9 +27,31 @@ const (
 	docTypeLoopPoster = "loop"
 )
 
+const legacyUpdatedAtExpr = "COALESCE(updated_at, '1970-01-01'::timestamptz)"
+
 func revisionHashSuffix(data []byte) string {
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])[:8]
+}
+
+func appendSinceFilter(query string, args *[]interface{}, hasSince bool, since time.Time) string {
+	if !hasSince {
+		return query
+	}
+	placeholder := len(*args) + 1
+	query = fmt.Sprintf("%s AND %s >= $%d", query, legacyUpdatedAtExpr, placeholder)
+	*args = append(*args, since)
+	return query
+}
+
+func (h *LegacyHandler) resolveUpdateSeq(ctx context.Context, docType, region string, current int64) int64 {
+	updateSeq := current
+	if strings.TrimSpace(region) != "" && h.revisions != nil {
+		if seq, err := h.revisions.GetRegionUpdateSeq(ctx, docType, normalizeRegion(region)); err == nil && seq > updateSeq {
+			updateSeq = seq
+		}
+	}
+	return updateSeq
 }
 
 func formatRevision(generation int, hashSuffix string) string {
@@ -140,6 +162,19 @@ type LegacyHandler struct {
 	revisions           repository.LegacyRevisionRepository
 }
 
+type legacySyncRow struct {
+	ID    string            `json:"id"`
+	Key   string            `json:"key"`
+	Value map[string]string `json:"value"`
+	Doc   map[string]any    `json:"doc,omitempty"`
+}
+
+type legacySyncSection struct {
+	Rows      []legacySyncRow `json:"rows"`
+	TotalRows int             `json:"total_rows"`
+	UpdateSeq int64           `json:"update_seq"`
+}
+
 func selectPosterDisplayID(defaultID string, doc map[string]any) string {
 	candidates := []string{
 		"posterId",
@@ -174,6 +209,39 @@ func selectThemeDisplayID(doc map[string]any) string {
 		"theme_id",
 		"themeId",
 		"themeID",
+		"loopPosterId",
+		"loop_poster_id",
+		"loopPosterID",
+		"id",
+	}
+	for _, key := range candidates {
+		if raw, ok := doc[key]; ok {
+			switch v := raw.(type) {
+			case string:
+				if s := strings.TrimSpace(v); s != "" {
+					return s
+				}
+			case fmt.Stringer:
+				if s := strings.TrimSpace(v.String()); s != "" {
+					return s
+				}
+			case json.Number:
+				if s := strings.TrimSpace(v.String()); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func selectLoopDisplayID(doc map[string]any) string {
+	candidates := []string{
+		"loopPosterId",
+		"loop_poster_id",
+		"loopPosterID",
+		"device_code",
+		"deviceCode",
 		"id",
 	}
 	for _, key := range candidates {
@@ -229,15 +297,17 @@ func regionOrFallback(doc map[string]any, fallback string) string {
 	return fallback
 }
 
-func (h *LegacyHandler) computeRevision(ctx context.Context, docType, region, docID string, data []byte) (string, int64) {
-	hashSuffix := revisionHashSuffix(data)
+func (h *LegacyHandler) getRevision(ctx context.Context, docType, region, docID string, data []byte) (string, int64) {
 	normRegion := normalizeRegion(region)
 	if h.revisions == nil || normRegion == "" {
-		return formatRevision(1, hashSuffix), 0
+		// Fallback when revision tracking is unavailable
+		return formatRevision(1, revisionHashSuffix(data)), 0
 	}
-	rev, seq, err := h.revisions.EnsureRevision(ctx, docType, normRegion, docID, hashSuffix)
+	// Read stored revision from replicator - no hash computation needed
+	rev, seq, err := h.revisions.GetRevision(ctx, docType, normRegion, docID)
 	if err != nil {
-		return formatRevision(1, hashSuffix), 0
+		// Fallback if document not tracked yet
+		return formatRevision(1, revisionHashSuffix(data)), 0
 	}
 	return rev, seq
 }
@@ -324,7 +394,7 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 	}
 
 	regionForDoc := extractRegion(rawDoc)
-	currentRev, _ := h.computeRevision(r.Context(), docTypeTheme, regionForDoc, themeID, dataVal)
+	currentRev, _ := h.getRevision(r.Context(), docTypeTheme, regionForDoc, themeID, dataVal)
 
 	// Check if client has current version
 	if clientRev != "" && clientRev == currentRev {
@@ -367,12 +437,10 @@ func (h *LegacyHandler) GetTheme(w http.ResponseWriter, r *http.Request) {
 
 // GetAllThemes handles /themes/_all_docs - CouchDB-style listing of all themes
 // @Summary Get all themes metadata
-// @Description Returns CouchDB-style _all_docs response with optional region filter.
+// @Description Returns CouchDB-style _all_docs response with optional region filter, include_docs support, and per-region update_seq metadata.
 // @Tags Legacy
 // @Produce json
 // @Param include_docs query boolean false "Include full document in response"
-// @Param limit query integer false "Limit number of results"
-// @Param skip query integer false "Skip number of results"
 // @Param region query string false "Filter by region (e.g., au, jct)"
 // @Success 200 {object} map[string]interface{} "CouchDB-style response with total_rows, offset, and rows array"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -386,38 +454,33 @@ func (h *LegacyHandler) GetAllThemes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	includeDocs := q.Get("include_docs") == "true"
 	region := strings.TrimSpace(q.Get("region"))
-	limit := 1000
-	skip := 0
 
-	if limitStr := q.Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
-		}
-	}
-	if skipStr := q.Get("skip"); skipStr != "" {
-		if s, err := strconv.Atoi(skipStr); err == nil && s >= 0 {
-			skip = s
-		}
-	}
-
-	statusClause := "upper(btrim(COALESCE(NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')"
 	orderExpr := "COALESCE(NULLIF(data->>'theme_id', ''), NULLIF(data->>'themeId', ''), NULLIF(data->>'id', ''))"
 
 	var query string
 	var args []interface{}
 	if region != "" {
-		query = fmt.Sprintf(`SELECT data FROM citypost.theme
-			WHERE %s
-				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', ''), ''))) = lower(btrim($1))
-			ORDER BY %s
-			LIMIT $2 OFFSET $3`, statusClause, orderExpr)
-		args = []interface{}{region, limit, skip}
+		query = fmt.Sprintf(`WITH docs AS (
+			SELECT data, 'theme' AS source_table FROM citypost.theme
+				WHERE lower(btrim(data->>'region')) = lower(btrim($1))
+					OR lower(btrim(data->>'city')) = lower(btrim($1))
+			UNION ALL
+			SELECT data, 'loop' AS source_table FROM citypost.loop_posters
+				WHERE lower(btrim(data->>'region')) = lower(btrim($1))
+					OR lower(btrim(data->>'city')) = lower(btrim($1))
+		)
+		SELECT data, source_table FROM docs
+		ORDER BY %s`, orderExpr)
+		args = []interface{}{region}
 	} else {
-		query = fmt.Sprintf(`SELECT data FROM citypost.theme
-			WHERE %s
-			ORDER BY %s
-			LIMIT $1 OFFSET $2`, statusClause, orderExpr)
-		args = []interface{}{limit, skip}
+		query = fmt.Sprintf(`WITH docs AS (
+			SELECT data, 'theme' AS source_table FROM citypost.theme
+			UNION ALL
+			SELECT data, 'loop' AS source_table FROM citypost.loop_posters
+		)
+		SELECT data, source_table FROM docs
+		ORDER BY %s`, orderExpr)
+		args = []interface{}{}
 	}
 
 	rows, err := h.replicaDB.QueryContext(r.Context(), query, args...)
@@ -432,12 +495,22 @@ func (h *LegacyHandler) GetAllThemes(w http.ResponseWriter, r *http.Request) {
 	var countQuery string
 	var countArgs []interface{}
 	if region != "" {
-		countQuery = fmt.Sprintf(`SELECT COUNT(*) FROM citypost.theme
-			WHERE %s
-				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', ''), ''))) = lower(btrim($1))`, statusClause)
+		countQuery = `SELECT COUNT(*) FROM (
+			SELECT 1 FROM citypost.theme
+				WHERE lower(btrim(data->>'region')) = lower(btrim($1))
+					OR lower(btrim(data->>'city')) = lower(btrim($1))
+			UNION ALL
+			SELECT 1 FROM citypost.loop_posters
+				WHERE lower(btrim(data->>'region')) = lower(btrim($1))
+					OR lower(btrim(data->>'city')) = lower(btrim($1))
+		) AS docs`
 		countArgs = []interface{}{region}
 	} else {
-		countQuery = fmt.Sprintf(`SELECT COUNT(*) FROM citypost.theme WHERE %s`, statusClause)
+		countQuery = `SELECT COUNT(*) FROM (
+			SELECT 1 FROM citypost.theme
+			UNION ALL
+			SELECT 1 FROM citypost.loop_posters
+		) AS docs`
 		countArgs = []interface{}{}
 	}
 	if err := h.replicaDB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&totalRows); err != nil {
@@ -455,21 +528,27 @@ func (h *LegacyHandler) GetAllThemes(w http.ResponseWriter, r *http.Request) {
 	var maxSeq int64
 	for rows.Next() {
 		var dataBytes []byte
-		if err := rows.Scan(&dataBytes); err != nil {
+		var sourceTable string
+		if err := rows.Scan(&dataBytes, &sourceTable); err != nil {
 			continue
 		}
 
 		var doc map[string]interface{}
 		displayID := ""
 		if err := json.Unmarshal(dataBytes, &doc); err == nil {
-			displayID = selectThemeDisplayID(doc)
+			if sourceTable == "loop" {
+				displayID = selectLoopDisplayID(doc)
+			} else {
+				displayID = selectThemeDisplayID(doc)
+			}
 		}
 		if strings.TrimSpace(displayID) == "" {
 			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
 		}
 
+		// Both theme and loop_posters use docTypeTheme for shared update_seq
 		regionForDoc := regionOrFallback(doc, region)
-		rev, seq := h.computeRevision(r.Context(), docTypeTheme, regionForDoc, displayID, dataBytes)
+		rev, seq := h.getRevision(r.Context(), docTypeTheme, regionForDoc, displayID, dataBytes)
 		if seq > maxSeq {
 			maxSeq = seq
 		}
@@ -492,6 +571,13 @@ func (h *LegacyHandler) GetAllThemes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updateSeq := maxSeq
+	if strings.TrimSpace(region) != "" && h.revisions != nil {
+		normRegion := normalizeRegion(region)
+		// Get theme update_seq (shared by both theme and loop_posters)
+		if seq, err := h.revisions.GetRegionUpdateSeq(r.Context(), docTypeTheme, normRegion); err == nil && seq > updateSeq {
+			updateSeq = seq
+		}
+	}
 	if updateSeq == 0 {
 		updateSeq = int64(totalRows)
 	}
@@ -890,7 +976,7 @@ func (h *LegacyHandler) GetContent(w http.ResponseWriter, r *http.Request) {
 		"ad_posters": adPosters,
 	}
 	combinedBytes, _ := json.Marshal(combinedData)
-	currentRev, _ := h.computeRevision(r.Context(), docTypeContent, region, fmt.Sprintf("%s:%s", city, region), combinedBytes)
+	currentRev, _ := h.getRevision(r.Context(), docTypeContent, region, fmt.Sprintf("%s:%s", city, region), combinedBytes)
 
 	// Check if client has current version
 	if clientRev != "" && clientRev == currentRev {
@@ -970,7 +1056,7 @@ func (h *LegacyHandler) GetPosterByID(w http.ResponseWriter, r *http.Request) {
 	if canonicalID == "" {
 		canonicalID = posterID
 	}
-	rev, _ := h.computeRevision(r.Context(), docTypePoster, region, canonicalID, dataBytes)
+	rev, _ := h.getRevision(r.Context(), docTypePoster, region, canonicalID, dataBytes)
 
 	doc["_id"] = posterID
 	doc["_rev"] = rev
@@ -986,8 +1072,6 @@ func (h *LegacyHandler) GetPosterByID(w http.ResponseWriter, r *http.Request) {
 // @Tags Legacy
 // @Produce json
 // @Param include_docs query boolean false "Include full document in response"
-// @Param limit query integer false "Limit number of results"
-// @Param skip query integer false "Skip number of results"
 // @Param region query string false "Filter by region (e.g., au, jct)"
 // @Success 200 {object} map[string]interface{} "CouchDB-style response with total_rows, offset, and rows array"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -1001,19 +1085,6 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	includeDocs := q.Get("include_docs") == "true"
 	region := strings.TrimSpace(q.Get("region"))
-	limit := 1000 // Default limit
-	skip := 0
-
-	if limitStr := q.Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
-		}
-	}
-	if skipStr := q.Get("skip"); skipStr != "" {
-		if s, err := strconv.Atoi(skipStr); err == nil && s >= 0 {
-			skip = s
-		}
-	}
 
 	// Build query with optional region filter
 	var query string
@@ -1024,16 +1095,14 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 			FROM citypost.posters
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
 				AND lower(btrim(COALESCE(NULLIF(region, ''), NULLIF(data->>'region', ''), NULLIF(data->>'region_name', '')))) = lower(btrim($1))
-			ORDER BY mongo_id
-			LIMIT $2 OFFSET $3`
-		args = []interface{}{region, limit, skip}
+			ORDER BY mongo_id`
+		args = []interface{}{region}
 	} else {
 		query = `SELECT mongo_id, data
 			FROM citypost.posters
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
-			ORDER BY mongo_id
-			LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, skip}
+			ORDER BY mongo_id`
+		args = []interface{}{}
 	}
 
 	rows, err := h.replicaDB.QueryContext(r.Context(), query, args...)
@@ -1089,7 +1158,7 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 		}
 
 		regionForDoc := regionOrFallback(doc, region)
-		rev, seq := h.computeRevision(r.Context(), docTypePoster, regionForDoc, mongoID, dataBytes)
+		rev, seq := h.getRevision(r.Context(), docTypePoster, regionForDoc, mongoID, dataBytes)
 		if seq > maxSeq {
 			maxSeq = seq
 		}
@@ -1187,7 +1256,7 @@ func (h *LegacyHandler) GetAdPosterByID(w http.ResponseWriter, r *http.Request) 
 	if canonicalID == "" {
 		canonicalID = adPosterID
 	}
-	rev, _ := h.computeRevision(r.Context(), docTypeAdPoster, region, canonicalID, dataBytes)
+	rev, _ := h.getRevision(r.Context(), docTypeAdPoster, region, canonicalID, dataBytes)
 
 	doc["_id"] = adPosterID
 	doc["_rev"] = rev
@@ -1242,7 +1311,7 @@ func (h *LegacyHandler) GetThemeByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	region := extractRegion(doc)
-	rev, _ := h.computeRevision(r.Context(), docTypeTheme, region, themeID, dataBytes)
+	rev, _ := h.getRevision(r.Context(), docTypeTheme, region, themeID, dataBytes)
 
 	doc["_id"] = themeID
 	doc["_rev"] = rev
@@ -1318,8 +1387,6 @@ func (h *LegacyHandler) GetLoopPosterByID(w http.ResponseWriter, r *http.Request
 // @Tags Legacy
 // @Produce json
 // @Param include_docs query boolean false "Include full document in response"
-// @Param limit query integer false "Limit number of results"
-// @Param skip query integer false "Skip number of results"
 // @Param region query string false "Filter by region (e.g., au, jct)"
 // @Success 200 {object} map[string]interface{} "CouchDB-style response with total_rows, offset, and rows array"
 // @Failure 500 {object} map[string]string "Internal server error"
@@ -1333,19 +1400,6 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	includeDocs := q.Get("include_docs") == "true"
 	region := strings.TrimSpace(q.Get("region"))
-	limit := 1000 // Default limit
-	skip := 0
-
-	if limitStr := q.Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
-		}
-	}
-	if skipStr := q.Get("skip"); skipStr != "" {
-		if s, err := strconv.Atoi(skipStr); err == nil && s >= 0 {
-			skip = s
-		}
-	}
 
 	// Build query with optional region filter
 	var query string
@@ -1356,16 +1410,14 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 			FROM citypost.ad_posters
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
 				AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', '')))) = lower(btrim($1))
-			ORDER BY external_id
-			LIMIT $2 OFFSET $3`
-		args = []interface{}{region, limit, skip}
+			ORDER BY external_id`
+		args = []interface{}{region}
 	} else {
 		query = `SELECT external_id, data
 			FROM citypost.ad_posters
 			WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
-			ORDER BY external_id
-			LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, skip}
+			ORDER BY external_id`
+		args = []interface{}{}
 	}
 
 	rows, err := h.replicaDB.QueryContext(r.Context(), query, args...)
@@ -1425,7 +1477,7 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 		}
 
 		regionForDoc := regionOrFallback(doc, region)
-		rev, seq := h.computeRevision(r.Context(), docTypeAdPoster, regionForDoc, externalID, dataBytes)
+		rev, seq := h.getRevision(r.Context(), docTypeAdPoster, regionForDoc, externalID, dataBytes)
 		if seq > maxSeq {
 			maxSeq = seq
 		}
@@ -1473,6 +1525,347 @@ func (h *LegacyHandler) GetAllAdPosters(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetLegacySync handles /legacy_sync - Combined sync endpoint for themes, posters, adposters, and loops
+// @Summary Get legacy documents changed since timestamp
+// @Description Returns CouchDB-style _all_docs sections for themes, posters, adposters, and loops, filtered by region and optional 'since' timestamp. Each section includes update_seq and rows with rev.
+// @Tags Legacy
+// @Produce json
+// @Param region query string true "Filter by region (e.g., au, jct)"
+// @Param since query string false "RFC3339 UTC timestamp; if omitted, returns all rows"
+// @Param include_docs query boolean false "Include full document in response"
+// @Success 200 {object} map[string]interface{} "Combined sync response with themes, posters, adposters, loops sections"
+// @Failure 400 {object} map[string]string "Missing region or invalid timestamp"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /legacy_sync [get]
+func (h *LegacyHandler) GetLegacySync(w http.ResponseWriter, r *http.Request) {
+	if h.replicaDB == nil {
+		writeJSONErrorResponse(w, http.StatusServiceUnavailable, "replicator_db_not_configured", "replicator database is not configured")
+		return
+	}
+
+	q := r.URL.Query()
+	region := strings.TrimSpace(q.Get("region"))
+	sinceStr := strings.TrimSpace(q.Get("since"))
+	includeDocs := q.Get("include_docs") == "true"
+
+	if region == "" {
+		writeJSONErrorResponse(w, http.StatusBadRequest, "missing_param", "region is required")
+		return
+	}
+
+	var since time.Time
+	var hasSince bool
+	if sinceStr != "" {
+		var err error
+		since, err = time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			writeJSONErrorResponse(w, http.StatusBadRequest, "invalid_timestamp", "since must be RFC3339 UTC timestamp")
+			return
+		}
+		hasSince = true
+	}
+
+	ctx := r.Context()
+	resp := map[string]any{
+		"region":       region,
+		"since":        sinceStr,
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Themes
+	themesSection, err := h.fetchThemesSync(ctx, region, hasSince, since, includeDocs)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to fetch themes")
+		return
+	}
+	resp["themes"] = themesSection
+
+	// Posters
+	postersSection, err := h.fetchPostersSync(ctx, region, hasSince, since, includeDocs)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to fetch posters")
+		return
+	}
+	resp["posters"] = postersSection
+
+	// Adposters
+	adPostersSection, err := h.fetchAdPostersSync(ctx, region, hasSince, since, includeDocs)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to fetch adposters")
+		return
+	}
+	resp["adposters"] = adPostersSection
+
+	// Loops (loop_posters)
+	loopsSection, err := h.fetchLoopsSync(ctx, region, hasSince, since, includeDocs)
+	if err != nil {
+		writeJSONErrorResponse(w, http.StatusInternalServerError, "internal_error", "failed to fetch loops")
+		return
+	}
+	resp["loops"] = loopsSection
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *LegacyHandler) fetchThemesSync(ctx context.Context, region string, hasSince bool, since time.Time, includeDocs bool) (legacySyncSection, error) {
+	query := `SELECT data FROM citypost.theme
+		WHERE upper(btrim(COALESCE(NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+			AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', '')))) = lower(btrim($1))`
+	args := []interface{}{region}
+	query = appendSinceFilter(query, &args, hasSince, since)
+
+	rows, err := h.replicaDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return legacySyncSection{}, err
+	}
+	defer rows.Close()
+
+	result := []legacySyncRow{}
+	var maxSeq int64
+	for rows.Next() {
+		var dataBytes []byte
+		if err := rows.Scan(&dataBytes); err != nil {
+			continue
+		}
+
+		var doc map[string]any
+		displayID := ""
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			displayID = selectThemeDisplayID(doc)
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.getRevision(ctx, docTypeTheme, regionForDoc, displayID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+
+		row := legacySyncRow{
+			ID:  displayID,
+			Key: displayID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs && doc != nil {
+			doc["_id"] = displayID
+			doc["_rev"] = rev
+			row.Doc = doc
+		}
+
+		result = append(result, row)
+	}
+
+	updateSeq := h.resolveUpdateSeq(ctx, docTypeTheme, region, maxSeq)
+	return legacySyncSection{
+		Rows:      result,
+		TotalRows: len(result),
+		UpdateSeq: updateSeq,
+	}, nil
+}
+
+func (h *LegacyHandler) fetchPostersSync(ctx context.Context, region string, hasSince bool, since time.Time, includeDocs bool) (legacySyncSection, error) {
+	query := `SELECT mongo_id, data FROM citypost.posters
+		WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+			AND lower(btrim(COALESCE(NULLIF(region, ''), NULLIF(data->>'region', ''), NULLIF(data->>'region_name', '')))) = lower(btrim($1))`
+	args := []interface{}{region}
+	query = appendSinceFilter(query, &args, hasSince, since)
+
+	rows, err := h.replicaDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return legacySyncSection{}, err
+	}
+	defer rows.Close()
+
+	result := []legacySyncRow{}
+	var maxSeq int64
+	for rows.Next() {
+		var mongoID string
+		var dataBytes []byte
+		if err := rows.Scan(&mongoID, &dataBytes); err != nil {
+			continue
+		}
+
+		var doc map[string]any
+		displayID := mongoID
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			displayID = selectPosterDisplayID(mongoID, doc)
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.getRevision(ctx, docTypePoster, regionForDoc, mongoID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+
+		row := legacySyncRow{
+			ID:  displayID,
+			Key: displayID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs && doc != nil {
+			doc["_id"] = displayID
+			doc["_rev"] = rev
+			row.Doc = doc
+		}
+
+		result = append(result, row)
+	}
+
+	updateSeq := h.resolveUpdateSeq(ctx, docTypePoster, region, maxSeq)
+	return legacySyncSection{
+		Rows:      result,
+		TotalRows: len(result),
+		UpdateSeq: updateSeq,
+	}, nil
+}
+
+func (h *LegacyHandler) fetchAdPostersSync(ctx context.Context, region string, hasSince bool, since time.Time, includeDocs bool) (legacySyncSection, error) {
+	query := `SELECT external_id, data FROM citypost.ad_posters
+		WHERE upper(btrim(COALESCE(NULLIF(status, ''), NULLIF(data->>'status', ''), 'ACTIVE'))) IN ('ACTIVE', 'SCHEDULED')
+			AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', '')))) = lower(btrim($1))`
+	args := []interface{}{region}
+	query = appendSinceFilter(query, &args, hasSince, since)
+
+	rows, err := h.replicaDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return legacySyncSection{}, err
+	}
+	defer rows.Close()
+
+	result := []legacySyncRow{}
+	var maxSeq int64
+	for rows.Next() {
+		var externalID string
+		var dataBytes []byte
+		if err := rows.Scan(&externalID, &dataBytes); err != nil {
+			continue
+		}
+
+		displayID := externalID
+		var doc map[string]any
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			if idVal, ok := doc["adPosterId"].(string); ok && strings.TrimSpace(idVal) != "" {
+				displayID = strings.TrimSpace(idVal)
+			} else if idVal, ok := doc["id"].(string); ok && strings.TrimSpace(idVal) != "" {
+				displayID = strings.TrimSpace(idVal)
+			}
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.getRevision(ctx, docTypeAdPoster, regionForDoc, externalID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+
+		row := legacySyncRow{
+			ID:  displayID,
+			Key: displayID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs {
+			if doc == nil {
+				if err := json.Unmarshal(dataBytes, &doc); err != nil {
+					doc = nil
+				}
+			}
+			if doc != nil {
+				doc["_id"] = displayID
+				doc["_rev"] = rev
+				row.Doc = doc
+			}
+		}
+
+		result = append(result, row)
+	}
+
+	updateSeq := h.resolveUpdateSeq(ctx, docTypeAdPoster, region, maxSeq)
+	return legacySyncSection{
+		Rows:      result,
+		TotalRows: len(result),
+		UpdateSeq: updateSeq,
+	}, nil
+}
+
+func (h *LegacyHandler) fetchLoopsSync(ctx context.Context, region string, hasSince bool, since time.Time, includeDocs bool) (legacySyncSection, error) {
+	query := `SELECT data FROM citypost.loop_posters
+		WHERE (status IS NULL OR btrim(status) = '' OR upper(btrim(status)) = 'ACTIVE')
+			AND lower(btrim(COALESCE(NULLIF(data->>'region', ''), NULLIF(data->>'region_name', ''), NULLIF(data->>'city', '')))) = lower(btrim($1))`
+	args := []interface{}{region}
+	query = appendSinceFilter(query, &args, hasSince, since)
+
+	rows, err := h.replicaDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return legacySyncSection{}, err
+	}
+	defer rows.Close()
+
+	result := []legacySyncRow{}
+	var maxSeq int64
+	for rows.Next() {
+		var dataBytes []byte
+		if err := rows.Scan(&dataBytes); err != nil {
+			continue
+		}
+
+		var doc map[string]any
+		displayID := ""
+		if err := json.Unmarshal(dataBytes, &doc); err == nil {
+			displayID = selectLoopDisplayID(doc)
+		}
+		if strings.TrimSpace(displayID) == "" {
+			displayID = fmt.Sprintf("rev-%s", revisionHashSuffix(dataBytes))
+		}
+
+		regionForDoc := regionOrFallback(doc, region)
+		rev, seq := h.getRevision(ctx, docTypeLoopPoster, regionForDoc, displayID, dataBytes)
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+
+		row := legacySyncRow{
+			ID:  displayID,
+			Key: displayID,
+			Value: map[string]string{
+				"rev": rev,
+			},
+		}
+
+		if includeDocs && doc != nil {
+			doc["_id"] = displayID
+			doc["_rev"] = rev
+			row.Doc = doc
+		}
+
+		result = append(result, row)
+	}
+
+	updateSeq := h.resolveUpdateSeq(ctx, docTypeLoopPoster, region, maxSeq)
+	return legacySyncSection{
+		Rows:      result,
+		TotalRows: len(result),
+		UpdateSeq: updateSeq,
+	}, nil
 }
 
 // GetLoopByDevice handles /theme/{device} - RESTful endpoint for loop data

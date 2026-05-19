@@ -14,6 +14,7 @@ type Config struct {
 	Environment            string
 	DatabaseURL            string
 	ReplicatorDatabaseURL  string
+	PostgresSchema         string
 	LogLevel               string
 	DBMaxConnections       int
 	DBMinConnections       int
@@ -99,6 +100,7 @@ func Load() (*Config, error) {
 		AuthReturnResetToken:   getEnvBool("AUTH_RETURN_RESET_TOKEN", false),
 		RateLimitWindowSeconds: getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60),
 		RateLimitMax:           getEnvInt("RATE_LIMIT_MAX", 120),
+		PostgresSchema:         getEnv("POSTGRES_SCHEMA", "citypost"),
 
 		VenuesCacheTTLSeconds:          getEnvInt("VENUES_CACHE_TTL_SECONDS", 300),
 		SuggestVenuesWorkers:           getEnvInt("SUGGEST_VENUES_WORKERS", 4),

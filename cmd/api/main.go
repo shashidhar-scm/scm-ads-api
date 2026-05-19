@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"
 
@@ -473,10 +474,20 @@ func main() {
 	}
 	defer pgxPool.Close()
 
+	// Create separate pgx pool for replicator database (for reading revisions)
+	var replicatorPGXPoll *pgxpool.Pool
+	if strings.TrimSpace(cfg.ReplicatorDatabaseURL) != "" {
+		replicatorPGXPoll, err = database.NewPool(poolCtx, cfg.ReplicatorDatabaseURL, poolCfg)
+		if err != nil {
+			appLogger.Fatal().Err(err).Msg("Failed to initialize replicator pgx pool")
+		}
+		defer replicatorPGXPoll.Close()
+	}
+
 	campaignRepo := repository.NewCampaignRepository(pgxPool)
 	creativeRepo := repository.NewCreativeRepository(pgxPool)
 	placeExchangeTokenRepo := repository.NewPlaceExchangeTokenRepository(pgxPool)
-	legacyRevisionRepo := repository.NewLegacyRevisionRepository(pgxPool)
+	legacyRevisionRepo := repository.NewLegacyRevisionRepository(replicatorPGXPoll, cfg.PostgresSchema)
 
 	// Create database if it doesn't exist
 	if err := db.CreateDatabaseIfNotExists(cfg.DatabaseURL); err != nil {

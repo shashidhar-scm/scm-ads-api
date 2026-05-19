@@ -22,10 +22,10 @@ func (n *noopPlaceExchangeTokenRepo) GetByCity(ctx context.Context, city string)
 
 type noopLegacyRevisionRepo struct{}
 
-func (n *noopLegacyRevisionRepo) EnsureRevision(ctx context.Context, docType, region, docID, hashSuffix string) (string, int64, error) {
-	return "1-ffffffff", 0, nil
-}
-
 func (n *noopLegacyRevisionRepo) GetRegionUpdateSeq(ctx context.Context, docType, region string) (int64, error) {
 	return 0, nil
+}
+
+func (n *noopLegacyRevisionRepo) GetRevision(ctx context.Context, docType, region, docID string) (string, int64, error) {
+	return "", 0, nil
 }
