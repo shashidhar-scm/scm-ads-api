@@ -1158,6 +1158,7 @@ func (h *LegacyHandler) GetAllPosters(w http.ResponseWriter, r *http.Request) {
 		}
 
 		regionForDoc := regionOrFallback(doc, region)
+		// Use mongoID for revision lookup to match replicator's canonicalPosterID logic
 		rev, seq := h.getRevision(r.Context(), docTypePoster, regionForDoc, mongoID, dataBytes)
 		if seq > maxSeq {
 			maxSeq = seq

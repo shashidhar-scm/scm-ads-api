@@ -1,17 +1,22 @@
 // MongoDB Region Sync Script
 // Run this inside MongoDB shell on the PRIMARY node
 // Usage: mongo --eval "var sourceRegion='da'; var targetRegion='cg';" sync-region-mongo.js
+// Usage with poster types: mongo --eval "var sourceRegion='da'; var targetRegion='cg'; var posterTypes=['restaurants', 'social_services'];" sync-region-mongo.js
 
 var sourceRegion = typeof sourceRegion !== 'undefined' ? sourceRegion : 'da';
 var sourceCity = typeof sourceCity !== 'undefined' ? sourceCity : 'da';
 var targetRegion = typeof targetRegion !== 'undefined' ? targetRegion : 'cg';
 var targetCity = typeof targetCity !== 'undefined' ? targetCity : 'cg';
+var posterTypes = typeof posterTypes !== 'undefined' ? posterTypes : [];
 
 print('========================================');
 print('MongoDB Region Sync');
 print('========================================');
 print('Source: ' + sourceRegion + ' / ' + sourceCity);
 print('Target: ' + targetRegion + ' / ' + targetCity);
+if (posterTypes.length > 0) {
+    print('Poster Types Filter: ' + posterTypes.join(', '));
+}
 print('========================================');
 
 // Function to update region/city fields in a document
@@ -41,6 +46,11 @@ var posterQuery = {
         { status: 'SCHEDULED' }
     ]
 };
+
+// Add poster type filter if specified
+if (posterTypes.length > 0) {
+    posterQuery.posterType = { $in: posterTypes };
+}
 
 var postersCursor = sourceDB.posters.find(posterQuery);
 var postersCount = 0;
@@ -91,6 +101,11 @@ var adPosterQuery = {
         { status: 'SCHEDULED' }
     ]
 };
+
+// Add poster type filter if specified
+if (posterTypes.length > 0) {
+    adPosterQuery.posterType = { $in: posterTypes };
+}
 
 var adPostersCursor = sourceDB.ad_posters.find(adPosterQuery);
 var adPostersCount = 0;

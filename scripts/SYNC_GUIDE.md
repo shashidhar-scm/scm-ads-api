@@ -19,8 +19,11 @@ This sync process copies **ACTIVE** and **SCHEDULED** posters and ad_posters fro
 ```bash
 cd /Users/gkg/workspace/scm/scm-ads-api
 
-# Sync from da to cg
+# Sync all posters from da to cg
 MONGO_PASSWORD='your_password' ./scripts/sync-with-auth.sh da cg
+
+# Sync only restaurants and social services from da to cg
+MONGO_PASSWORD='your_password' ./scripts/sync-with-auth.sh da cg "restaurants,social_services"
 
 # Sync from au to us
 MONGO_PASSWORD='your_password' ./scripts/sync-with-auth.sh au us
@@ -31,6 +34,7 @@ MONGO_PASSWORD='your_password' ./scripts/sync-with-auth.sh au us
 ### Data Selection
 - **Collections**: `posters` and `ad_posters`
 - **Status Filter**: Only `ACTIVE` and `SCHEDULED` items
+- **Poster Type Filter**: Optional - sync only specific poster types (e.g., restaurants, social_services)
 - **Source**: Specified source region database
 - **Target**: Specified target region database
 
@@ -88,7 +92,48 @@ Syncing ad_posters from da to cg...
 MONGO_PASSWORD='asterisk' ./scripts/sync-with-auth.sh au us
 ```
 
-### Example 3: Use Different MongoDB Pod
+### Example 3: Sync Only Specific Poster Types
+
+Sync only restaurants and social services from Dallas to Chicago:
+
+```bash
+MONGO_PASSWORD='asterisk' ./scripts/sync-with-auth.sh da cg "restaurants,social_services"
+```
+
+**Output:**
+```
+=========================================
+MongoDB Region Sync (Authenticated)
+=========================================
+Source: da
+Target: cg
+Poster Types: restaurants,social_services
+MongoDB Pod: prod-mongodb-2
+=========================================
+
+Filtering by poster types: restaurants, social_services
+Syncing posters from da to cg...
+✓ Posters: 456 total (456 new, 0 updated)
+
+Syncing ad_posters from da to cg...
+✓ Ad Posters: 12 total (12 new, 0 updated)
+```
+
+**Common Poster Types:**
+- `restaurants`
+- `social_services`
+- `rss_restaurant`
+- `entertainment`
+- `retail`
+- `healthcare`
+
+**Multiple Types:**
+```bash
+# Sync multiple types (comma-separated, no spaces)
+MONGO_PASSWORD='asterisk' ./scripts/sync-with-auth.sh da cg "restaurants,social_services,entertainment"
+```
+
+### Example 4: Use Different MongoDB Pod
 
 ```bash
 MONGO_POD=prod-mongodb-1 MONGO_PASSWORD='asterisk' ./scripts/sync-with-auth.sh da cg
@@ -108,11 +153,14 @@ MONGO_POD=prod-mongodb-1 MONGO_PASSWORD='asterisk' ./scripts/sync-with-auth.sh d
 ### Script Parameters
 
 ```bash
-./scripts/sync-with-auth.sh [SOURCE_REGION] [TARGET_REGION]
+./scripts/sync-with-auth.sh [SOURCE_REGION] [TARGET_REGION] [POSTER_TYPES]
 ```
 
 - **SOURCE_REGION**: Source region database name (default: `da`)
 - **TARGET_REGION**: Target region database name (default: `cg`)
+- **POSTER_TYPES**: Optional comma-separated list of poster types to sync (default: all types)
+  - Example: `"restaurants,social_services"`
+  - Leave empty to sync all poster types
 
 ## Available Scripts
 
